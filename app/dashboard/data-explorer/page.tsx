@@ -20,6 +20,21 @@ import { useAuth } from '@/lib/auth-context'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { format } from 'date-fns'
 
+function getLatestActiveGrants(grants: AccessGrant[]): AccessGrant[] {
+  const latestByDevice = new Map<string, AccessGrant>()
+
+  grants
+    .filter(grant => new Date(grant.expiresAt) >= new Date())
+    .forEach(grant => {
+      const existing = latestByDevice.get(grant.deviceId)
+      if (!existing || new Date(grant.createdAt) > new Date(existing.createdAt)) {
+        latestByDevice.set(grant.deviceId, grant)
+      }
+    })
+
+  return Array.from(latestByDevice.values())
+}
+
 export default function DataExplorerPage() {
   const { userId } = useAuth()
   const [grants, setGrants] = useState<AccessGrant[]>([])
@@ -38,11 +53,16 @@ export default function DataExplorerPage() {
     const loadData = async () => {
       try {
         const [grants, allDevices] = await Promise.all([getAccessGrants(), getDevices()])
-        const developerGrants = grants.filter((grant) => grant.developerId === userId)
+        const developerGrants = getLatestActiveGrants(grants.filter((grant) => grant.developerId === userId))
         setGrants(developerGrants)
         setDevices(allDevices)
-        if (developerGrants.length > 0 && !selectedDeviceId) {
+
+        const selectedGrantStillActive = developerGrants.some((grant) => grant.deviceId === selectedDeviceId)
+        if (developerGrants.length > 0 && (!selectedDeviceId || !selectedGrantStillActive)) {
           setSelectedDeviceId(developerGrants[0].deviceId)
+        } else if (developerGrants.length === 0 && selectedDeviceId) {
+          setSelectedDeviceId('')
+          setTelemetryData([])
         }
       } catch (error) {
         console.error('Failed to load data explorer data', error)
@@ -50,6 +70,9 @@ export default function DataExplorerPage() {
     }
 
     loadData()
+
+    const interval = setInterval(loadData, 5000)
+    return () => clearInterval(interval)
   }, [userId, selectedDeviceId])
 
   // Load telemetry when device changes

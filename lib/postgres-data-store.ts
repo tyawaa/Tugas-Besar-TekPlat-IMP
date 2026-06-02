@@ -225,7 +225,7 @@ async function createTables(client: PoolClient): Promise<void> {
       purpose TEXT NOT NULL,
       scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
       requested_until TEXT NOT NULL,
-      status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'revoked')),
+      status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'revoked', 'cancelled')),
       created_at TEXT NOT NULL
     );
 
