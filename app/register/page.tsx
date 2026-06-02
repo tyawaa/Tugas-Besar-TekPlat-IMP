@@ -10,11 +10,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Radio, Cpu, Code, ArrowLeft, CheckCircle } from 'lucide-react'
 
-const MOCK_USERS = {
-  device_owner: { id: 'u1', name: 'Ahmad Fauzi', email: 'ahmad@campus.edu' },
-  developer: { id: 'u2', name: 'Siti Rahayu', email: 'siti@campus.edu' },
-}
-
 export default function RegisterPage() {
   const router = useRouter()
   const { login } = useAuth()
@@ -25,8 +20,8 @@ export default function RegisterPage() {
 
   const handleRegister = (e: React.FormEvent) => {
     e.preventDefault()
-    const user = MOCK_USERS[selectedRole]
-    login(user.id, user.name, user.email, selectedRole)
+    const userId = `user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    login(userId, name.trim(), email.trim(), selectedRole)
     const redirect = new URLSearchParams(window.location.search).get('redirect')
     router.push(redirect?.startsWith('/') ? redirect : '/dashboard')
   }
@@ -58,7 +53,7 @@ export default function RegisterPage() {
               Join IoTBridge as a device owner or developer
             </CardDescription>
             <p className="mt-3 text-xs text-muted-foreground">
-              Authentication is mocked for MVP frontend demo. Backend authentication will be connected later.
+              This MVP creates a local demo session. Backend authentication will be connected later.
             </p>
           </CardHeader>
           <CardContent>
