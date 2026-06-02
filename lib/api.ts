@@ -57,6 +57,16 @@ export async function getUsers(): Promise<PublicUser[]> {
   return fetchJson<PublicUser[]>('/api/auth/users')
 }
 
+export async function updateUserAction(
+  userId: string,
+  action: 'suspend' | 'reinstate'
+): Promise<PublicUser> {
+  return fetchJson<PublicUser>(`/api/auth/users/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ action }),
+  })
+}
+
 export async function getDevices(): Promise<Device[]> {
   return fetchJson<Device[]>(`${baseUrl}/devices`)
 }
