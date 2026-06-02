@@ -4,12 +4,40 @@ Panduan ini untuk deploy IoTBridge ke Vercel dan menghubungkan ESP32 ke endpoint
 
 ## Backend Storage
 
-Backend ini bisa berjalan dengan dua mode:
+Backend ini bisa berjalan dengan tiga mode:
 
 - Local development: membaca dan menulis ke folder `data/`.
-- Vercel production: gunakan Upstash Redis lewat environment variables.
+- PostgreSQL production: gunakan `DATABASE_URL` atau `POSTGRES_URL`.
+- Redis fallback: gunakan Upstash Redis kalau PostgreSQL belum dipakai.
 
-Vercel Functions punya filesystem read-only dan hanya `/tmp` yang writable sementara, jadi file JSON di `data/` tidak cocok untuk telemetry production. Kode sekarang otomatis memakai Redis kalau env berikut tersedia:
+Vercel Functions punya filesystem read-only dan hanya `/tmp` yang writable sementara, jadi file JSON di `data/` tidak cocok untuk telemetry production. Kode sekarang otomatis memakai PostgreSQL kalau salah satu env berikut tersedia:
+
+```env
+DATABASE_URL=postgresql://user:password@host:5432/database
+```
+
+Atau:
+
+```env
+POSTGRES_URL=postgresql://user:password@host:5432/database
+```
+
+Opsional untuk provider yang membutuhkan SSL eksplisit:
+
+```env
+IOTBRIDGE_POSTGRES_SSL=true
+```
+
+Tabel PostgreSQL akan dibuat otomatis saat request backend pertama kali berjalan. Schema manual juga tersedia di `database/schema.sql`.
+Untuk flow yang lebih rapi, jalankan migration tool sebelum app dipakai:
+
+```bash
+pnpm db:migrate
+```
+
+Migration files ada di folder `database/migrations/` dan statusnya dicatat di tabel `schema_migrations`.
+
+Kalau PostgreSQL belum dikonfigurasi, kode masih mendukung Redis. Env Redis:
 
 ```env
 UPSTASH_REDIS_REST_URL=...
@@ -44,9 +72,10 @@ IOTBRIDGE_REDIS_PREFIX=iotbridge
 4. Framework preset: Next.js.
 5. Install command: `pnpm install`.
 6. Build command: `pnpm build`.
-7. Tambahkan Upstash Redis dari Vercel Marketplace ke project.
-8. Pastikan env Redis masuk ke Production dan Preview.
-9. Redeploy project setelah env Redis tersedia.
+7. Tambahkan PostgreSQL provider, misalnya Vercel Postgres, Supabase, Neon, atau Railway.
+8. Set `DATABASE_URL` atau `POSTGRES_URL` di Environment Variables untuk Production dan Preview.
+9. Jalankan `pnpm db:migrate` dengan env PostgreSQL yang sama.
+10. Redeploy project setelah env PostgreSQL tersedia.
 
 Setelah deploy, base URL akan seperti:
 
@@ -56,7 +85,7 @@ https://nama-project.vercel.app
 
 ## Auth dan Admin
 
-User dan session juga disimpan di Redis. Password disimpan sebagai hash, bukan plaintext.
+User dan session juga disimpan di PostgreSQL saat `DATABASE_URL` atau `POSTGRES_URL` tersedia. Password disimpan sebagai hash, bukan plaintext.
 
 Admin tidak dibuat lewat halaman register. Backend akan membuat akun admin bootstrap secara otomatis saat auth endpoint pertama kali dipanggil.
 
@@ -76,6 +105,18 @@ IOTBRIDGE_ADMIN_NAME=Admin Campus
 ```
 
 Setelah deploy, admin login lewat `/login`. Halaman `/register` hanya untuk `Device Owner` dan `Developer`.
+
+Selama seed demo belum dimatikan, backend akan seed akun demo dari data mock utama agar relasi `ownerId`, access request, dan access grant tetap tersambung:
+
+```txt
+Device Owner: ahmad.fauzi@campus.edu
+Developer: siti.rahayu@campus.edu
+Developer: budi.santoso@campus.edu
+Admin Demo: admin@campus.edu
+Password: Demo12345!
+```
+
+Ubah password demo dengan env `IOTBRIDGE_DEMO_USER_PASSWORD`, atau matikan seed demo dengan `IOTBRIDGE_SEED_DEMO_USERS=false`.
 
 ## Endpoint ESP32
 
@@ -200,4 +241,4 @@ void loop() {
 - Ambil `Device ID` dan `API Key` dari halaman device di dashboard.
 - Kalau key salah, backend mengembalikan `401 Invalid device key`.
 - Kalau device `suspended` atau `archived`, backend mengembalikan `403`.
-- Jangan deploy production hanya dengan file JSON lokal; gunakan Redis env di atas agar telemetry tetap tersimpan.
+- Jangan deploy production hanya dengan file JSON lokal; gunakan PostgreSQL agar telemetry tetap tersimpan.

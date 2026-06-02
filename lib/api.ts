@@ -91,9 +91,6 @@ export async function getAccessRequests(): Promise<AccessRequest[]> {
 
 export async function createAccessRequest(payload: {
   deviceId: string
-  developerId: string
-  developerName: string
-  developerEmail: string
   purpose: string
   scopes: string[]
   requestedUntil: string

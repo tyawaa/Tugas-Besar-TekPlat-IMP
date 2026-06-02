@@ -14,6 +14,8 @@ import {
   auditLogs as initialAuditLogs,
 } from './mock-data'
 import { AuthSession, StoredUser } from './auth-types'
+import { createInitialDemoUsers, shouldSeedDemoUsers } from './demo-users'
+import { isPostgresConfigured, PostgresDataStore } from './postgres-data-store'
 
 const DATA_DIR =
   process.env.IOTBRIDGE_DATA_DIR ||
@@ -145,7 +147,7 @@ function generateId(prefix: string): string {
 
 export class ServerDataStore {
   private static getUsersFile(): Promise<StoredUser[]> {
-    return readCollection<StoredUser[]>('users', [])
+    return readCollection<StoredUser[]>('users', createInitialDemoUsers())
   }
 
   private static getSessionsFile(): Promise<AuthSession[]> {
@@ -201,21 +203,38 @@ export class ServerDataStore {
   }
 
   static async getAllUsers(): Promise<StoredUser[]> {
-    return this.getUsersFile()
+    if (isPostgresConfigured()) return PostgresDataStore.getAllUsers()
+    const users = await this.getUsersFile()
+    if (!shouldSeedDemoUsers()) return users
+
+    const existingIds = new Set(users.map(user => user.id))
+    const existingEmails = new Set(users.map(user => user.email.toLowerCase()))
+    const missingSeedUsers = createInitialDemoUsers().filter(
+      user => !existingIds.has(user.id) && !existingEmails.has(user.email.toLowerCase())
+    )
+
+    if (missingSeedUsers.length === 0) return users
+
+    const mergedUsers = [...users, ...missingSeedUsers]
+    await this.writeUsers(mergedUsers)
+    return mergedUsers
   }
 
   static async getUserById(id: string): Promise<StoredUser | null> {
+    if (isPostgresConfigured()) return PostgresDataStore.getUserById(id)
     const users = await this.getAllUsers()
     return users.find(user => user.id === id) || null
   }
 
   static async getUserByEmail(email: string): Promise<StoredUser | null> {
+    if (isPostgresConfigured()) return PostgresDataStore.getUserByEmail(email)
     const normalizedEmail = email.trim().toLowerCase()
     const users = await this.getAllUsers()
     return users.find(user => user.email.toLowerCase() === normalizedEmail) || null
   }
 
   static async addUser(user: StoredUser): Promise<StoredUser> {
+    if (isPostgresConfigured()) return PostgresDataStore.addUser(user)
     const users = await this.getAllUsers()
     users.push(user)
     await this.writeUsers(users)
@@ -223,6 +242,7 @@ export class ServerDataStore {
   }
 
   static async updateUser(id: string, updates: Partial<StoredUser>): Promise<StoredUser | null> {
+    if (isPostgresConfigured()) return PostgresDataStore.updateUser(id, updates)
     const users = await this.getAllUsers()
     const index = users.findIndex(user => user.id === id)
     if (index < 0) return null
@@ -232,15 +252,18 @@ export class ServerDataStore {
   }
 
   static async getAllSessions(): Promise<AuthSession[]> {
+    if (isPostgresConfigured()) return PostgresDataStore.getAllSessions()
     return this.getSessionsFile()
   }
 
   static async getSessionByTokenHash(tokenHash: string): Promise<AuthSession | null> {
+    if (isPostgresConfigured()) return PostgresDataStore.getSessionByTokenHash(tokenHash)
     const sessions = await this.getAllSessions()
     return sessions.find(session => session.tokenHash === tokenHash) || null
   }
 
   static async addSession(session: AuthSession): Promise<AuthSession> {
+    if (isPostgresConfigured()) return PostgresDataStore.addSession(session)
     const sessions = await this.getAllSessions()
     sessions.push(session)
     await this.writeSessions(sessions)
@@ -248,6 +271,7 @@ export class ServerDataStore {
   }
 
   static async deleteSessionByTokenHash(tokenHash: string): Promise<boolean> {
+    if (isPostgresConfigured()) return PostgresDataStore.deleteSessionByTokenHash(tokenHash)
     const sessions = await this.getAllSessions()
     const filtered = sessions.filter(session => session.tokenHash !== tokenHash)
     if (filtered.length === sessions.length) return false
@@ -256,6 +280,7 @@ export class ServerDataStore {
   }
 
   static async pruneExpiredSessions(now = new Date()): Promise<void> {
+    if (isPostgresConfigured()) return PostgresDataStore.pruneExpiredSessions(now)
     const sessions = await this.getAllSessions()
     const filtered = sessions.filter(session => new Date(session.expiresAt) > now)
     if (filtered.length !== sessions.length) {
@@ -264,15 +289,18 @@ export class ServerDataStore {
   }
 
   static async getAllDevices(): Promise<Device[]> {
+    if (isPostgresConfigured()) return PostgresDataStore.getAllDevices()
     return this.getDevicesFile()
   }
 
   static async getDeviceById(id: string): Promise<Device | null> {
+    if (isPostgresConfigured()) return PostgresDataStore.getDeviceById(id)
     const devices = await this.getAllDevices()
     return devices.find(device => device.id === id) || null
   }
 
   static async addDevice(device: Device): Promise<Device> {
+    if (isPostgresConfigured()) return PostgresDataStore.addDevice(device)
     const devices = await this.getAllDevices()
     devices.push(device)
     await this.writeDevices(devices)
@@ -280,6 +308,7 @@ export class ServerDataStore {
   }
 
   static async updateDevice(id: string, updates: Partial<Device>): Promise<Device | null> {
+    if (isPostgresConfigured()) return PostgresDataStore.updateDevice(id, updates)
     const devices = await this.getAllDevices()
     const index = devices.findIndex(device => device.id === id)
     if (index < 0) return null
@@ -289,15 +318,18 @@ export class ServerDataStore {
   }
 
   static async getAllAccessRequests(): Promise<AccessRequest[]> {
+    if (isPostgresConfigured()) return PostgresDataStore.getAllAccessRequests()
     return this.getAccessRequestsFile()
   }
 
   static async getAccessRequestById(id: string): Promise<AccessRequest | null> {
+    if (isPostgresConfigured()) return PostgresDataStore.getAccessRequestById(id)
     const requests = await this.getAllAccessRequests()
     return requests.find(request => request.id === id) || null
   }
 
   static async addAccessRequest(request: AccessRequest): Promise<AccessRequest> {
+    if (isPostgresConfigured()) return PostgresDataStore.addAccessRequest(request)
     const requests = await this.getAllAccessRequests()
     requests.push(request)
     await this.writeAccessRequests(requests)
@@ -305,6 +337,7 @@ export class ServerDataStore {
   }
 
   static async updateAccessRequest(id: string, updates: Partial<AccessRequest>): Promise<AccessRequest | null> {
+    if (isPostgresConfigured()) return PostgresDataStore.updateAccessRequest(id, updates)
     const requests = await this.getAllAccessRequests()
     const index = requests.findIndex(request => request.id === id)
     if (index < 0) return null
@@ -314,10 +347,12 @@ export class ServerDataStore {
   }
 
   static async getAllAccessGrants(): Promise<AccessGrant[]> {
+    if (isPostgresConfigured()) return PostgresDataStore.getAllAccessGrants()
     return this.getAccessGrantsFile()
   }
 
   static async addAccessGrant(grant: AccessGrant): Promise<AccessGrant> {
+    if (isPostgresConfigured()) return PostgresDataStore.addAccessGrant(grant)
     const grants = await this.getAllAccessGrants()
     grants.push(grant)
     await this.writeAccessGrants(grants)
@@ -325,6 +360,7 @@ export class ServerDataStore {
   }
 
   static async revokeAccessGrant(id: string): Promise<boolean> {
+    if (isPostgresConfigured()) return PostgresDataStore.revokeAccessGrant(id)
     const grants = await this.getAllAccessGrants()
     const filtered = grants.filter(grant => grant.id !== id)
     if (filtered.length === grants.length) return false
@@ -333,10 +369,12 @@ export class ServerDataStore {
   }
 
   static async getAllTelemetry(): Promise<TelemetryRecord[]> {
+    if (isPostgresConfigured()) return PostgresDataStore.getAllTelemetry()
     return this.getTelemetryFile()
   }
 
   static async getTelemetryByDevice(deviceId: string): Promise<TelemetryRecord[]> {
+    if (isPostgresConfigured()) return PostgresDataStore.getTelemetryByDevice(deviceId)
     const telemetry = await this.getAllTelemetry()
     return telemetry
       .filter(record => record.deviceId === deviceId)
@@ -344,11 +382,13 @@ export class ServerDataStore {
   }
 
   static async getLatestTelemetry(deviceId: string): Promise<TelemetryRecord | null> {
+    if (isPostgresConfigured()) return PostgresDataStore.getLatestTelemetry(deviceId)
     const telemetry = await this.getTelemetryByDevice(deviceId)
     return telemetry.sort((a, b) => new Date(b.timestamp).valueOf() - new Date(a.timestamp).valueOf())[0] ?? null
   }
 
   static async getTelemetryHistory(deviceId: string, from?: Date, to?: Date): Promise<TelemetryRecord[]> {
+    if (isPostgresConfigured()) return PostgresDataStore.getTelemetryHistory(deviceId, from, to)
     const telemetry = await this.getTelemetryByDevice(deviceId)
     return telemetry
       .filter(record => {
@@ -361,6 +401,7 @@ export class ServerDataStore {
   }
 
   static async addTelemetry(record: TelemetryRecord): Promise<TelemetryRecord> {
+    if (isPostgresConfigured()) return PostgresDataStore.addTelemetry(record)
     const telemetry = await this.getAllTelemetry()
     telemetry.push(record)
     await this.writeTelemetry(telemetry)
@@ -368,10 +409,12 @@ export class ServerDataStore {
   }
 
   static async getAllAuditLogs(): Promise<AuditLog[]> {
+    if (isPostgresConfigured()) return PostgresDataStore.getAllAuditLogs()
     return this.getAuditLogsFile()
   }
 
   static async addAuditLog(log: AuditLog): Promise<AuditLog> {
+    if (isPostgresConfigured()) return PostgresDataStore.addAuditLog(log)
     const logs = await this.getAllAuditLogs()
     logs.push(log)
     await this.writeAuditLogs(logs)

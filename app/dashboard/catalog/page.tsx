@@ -37,7 +37,7 @@ import { HealthBadge } from '@/components/devices/health-badge'
 import { createAccessRequest, getDevices } from '@/lib/api'
 
 export default function CatalogPage() {
-  const { userId, userName, userEmail } = useAuth()
+  const { userId } = useAuth()
   const [catalogDevices, setCatalogDevices] = useState<Device[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
@@ -82,14 +82,11 @@ export default function CatalogPage() {
   }
 
   const handleSubmitRequest = async () => {
-    if (!selectedDevice || !userId || !userName || !userEmail) return
+    if (!selectedDevice || !userId) return
 
     try {
       await createAccessRequest({
         deviceId: selectedDevice.id,
-        developerId: userId,
-        developerName: userName,
-        developerEmail: userEmail,
         purpose: purpose || 'Access to device telemetry data',
         scopes: ['telemetry:read'],
         requestedUntil:
