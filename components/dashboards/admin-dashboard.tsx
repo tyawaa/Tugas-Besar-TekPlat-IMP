@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { ReactNode, useEffect, useMemo, useState } from 'react'
 import { KPICard, StatusBadge } from '@/components/layout/dashboard-layout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -36,6 +36,14 @@ import {
   MoreHorizontal,
   Search,
   RotateCcw,
+  Activity,
+  Archive,
+  Database,
+  KeyRound,
+  ShieldCheck,
+  UserCheck,
+  UserX,
+  Wifi,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -43,15 +51,27 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { AuditLog, Device, UserRole } from '@/lib/mock-data'
-import { getDevices, getAuditLogs, getUsers, updateDeviceAction, updateUserAction } from '@/lib/api'
+import { AccessGrant, AccessRequest, AuditLog, Device, TelemetryRecord, UserRole } from '@/lib/mock-data'
+import {
+  getAccessGrants,
+  getAccessRequests,
+  getAuditLogs,
+  getDevices,
+  getTelemetry,
+  getUsers,
+  updateDeviceAction,
+  updateUserAction,
+} from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { PublicUser } from '@/lib/auth-types'
 import { toast } from '@/hooks/use-toast'
-import { format } from 'date-fns'
+import { format, formatDistanceToNow } from 'date-fns'
 import { useRouter } from 'next/navigation'
 
 const roleOptions: UserRole[] = ['device_owner', 'developer', 'admin']
+const STALE_HEARTBEAT_MULTIPLIER = 3
+const ONE_DAY_MS = 24 * 60 * 60 * 1000
+const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
 function roleLabel(role: UserRole) {
   return role.replace('_', ' ')
@@ -71,11 +91,57 @@ function UserStatusBadge({ status }: { status: PublicUser['status'] }) {
   )
 }
 
+function SignalRow({
+  icon,
+  label,
+  value,
+  detail,
+}: {
+  icon: ReactNode
+  label: string
+  value: string | number
+  detail?: string
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b border-border/70 py-3 last:border-b-0">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+          {icon}
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-foreground">{label}</p>
+          {detail && <p className="truncate text-xs text-muted-foreground">{detail}</p>}
+        </div>
+      </div>
+      <p className="shrink-0 text-lg font-semibold text-foreground">{value}</p>
+    </div>
+  )
+}
+
+function isValidDate(value: string) {
+  return !Number.isNaN(new Date(value).valueOf())
+}
+
+function isDeviceStale(device: Device, now = Date.now()) {
+  if (device.status !== 'online') return false
+  if (!isValidDate(device.lastSeen)) return false
+  const heartbeatMs = Math.max(device.heartbeatInterval, 1) * 1000
+  return now - new Date(device.lastSeen).getTime() > heartbeatMs * STALE_HEARTBEAT_MULTIPLIER
+}
+
+function isGrantActive(grant: AccessGrant, now = Date.now()) {
+  if (!isValidDate(grant.expiresAt)) return false
+  return new Date(grant.expiresAt).getTime() > now
+}
+
 export function AdminDashboard() {
   const { userId, userName, userRole } = useAuth()
   const router = useRouter()
   const [devices, setDevices] = useState<Device[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
+  const [telemetryRecords, setTelemetryRecords] = useState<TelemetryRecord[]>([])
+  const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([])
+  const [accessGrants, setAccessGrants] = useState<AccessGrant[]>([])
   const [users, setUsers] = useState<PublicUser[]>([])
   const [selectedUser, setSelectedUser] = useState<PublicUser | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -97,11 +163,21 @@ export function AdminDashboard() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [devices, logs, users] = await Promise.all([getDevices(), getAuditLogs(), getUsers()])
+        const [devices, logs, users, telemetry, requests, grants] = await Promise.all([
+          getDevices(),
+          getAuditLogs(),
+          getUsers(),
+          getTelemetry(),
+          getAccessRequests(),
+          getAccessGrants(),
+        ])
         logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
         setDevices(devices)
         setUsers(users)
         setAuditLogs(logs)
+        setTelemetryRecords(telemetry)
+        setAccessRequests(requests)
+        setAccessGrants(grants)
       } catch (error) {
         console.error('Failed to load admin dashboard data', error)
       }
@@ -115,6 +191,34 @@ export function AdminDashboard() {
     offlineDevices: devices.filter((device) => device.status === 'offline').length,
     suspendedDevices: devices.filter((device) => device.status === 'suspended').length,
   }
+
+  const now = Date.now()
+  const onlineDevices = devices.filter((device) => device.status === 'online')
+  const offlineDevices = devices.filter((device) => device.status === 'offline')
+  const suspendedDevices = devices.filter((device) => device.status === 'suspended')
+  const archivedDevices = devices.filter((device) => device.status === 'archived')
+  const catalogDevices = devices.filter((device) => device.visibility === 'catalog' && device.status !== 'archived')
+  const staleDevices = onlineDevices
+    .filter((device) => isDeviceStale(device, now))
+    .sort((a, b) => new Date(a.lastSeen).getTime() - new Date(b.lastSeen).getTime())
+
+  const telemetryLast24h = telemetryRecords.filter((record) => (
+    isValidDate(record.timestamp) && now - new Date(record.timestamp).getTime() <= ONE_DAY_MS
+  ))
+  const latestTelemetryRecord = telemetryRecords
+    .filter((record) => isValidDate(record.timestamp))
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]
+  const telemetryDeviceIds = new Set(telemetryRecords.map((record) => record.deviceId))
+  const devicesWithTelemetry = devices.filter((device) => telemetryDeviceIds.has(device.id)).length
+
+  const pendingRequests = accessRequests.filter((request) => request.status === 'pending')
+  const activeGrants = accessGrants.filter((grant) => isGrantActive(grant, now))
+  const expiringGrants = activeGrants.filter((grant) => new Date(grant.expiresAt).getTime() - now <= ONE_WEEK_MS)
+
+  const deviceOwnerCount = users.filter((user) => user.role === 'device_owner').length
+  const developerCount = users.filter((user) => user.role === 'developer').length
+  const adminCount = users.filter((user) => user.role === 'admin').length
+  const suspendedUserCount = users.filter((user) => user.status === 'suspended').length
 
   const deviceOwnerOptions = useMemo(() => {
     const ownerIds = new Set(devices.map((device) => device.ownerId))
@@ -242,6 +346,11 @@ export function AdminDashboard() {
     return owner?.name || ownerId
   }
 
+  const getDeviceName = (deviceId: string) => {
+    const device = devices.find((device) => device.id === deviceId)
+    return device?.name || deviceId
+  }
+
   const getOwnedDeviceCount = (ownerId: string) => devices.filter((device) => device.ownerId === ownerId).length
 
   return (
@@ -251,6 +360,171 @@ export function AdminDashboard() {
         <KPICard title="Total Devices" value={stats.totalDevices} icon={<Cpu className="h-5 w-5" />} />
         <KPICard title="Offline Devices" value={stats.offlineDevices} icon={<WifiOff className="h-5 w-5" />} />
         <KPICard title="Suspended Devices" value={stats.suspendedDevices} icon={<Ban className="h-5 w-5" />} />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base font-semibold">Platform Monitoring</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-6 md:grid-cols-2">
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Device Network
+                </p>
+                <SignalRow
+                  icon={<Wifi className="h-4 w-4" />}
+                  label="Online Devices"
+                  value={onlineDevices.length}
+                  detail={`${staleDevices.length} stale by heartbeat`}
+                />
+                <SignalRow
+                  icon={<WifiOff className="h-4 w-4" />}
+                  label="Offline Devices"
+                  value={offlineDevices.length}
+                  detail="Not currently reachable"
+                />
+                <SignalRow
+                  icon={<Ban className="h-4 w-4" />}
+                  label="Suspended Devices"
+                  value={suspendedDevices.length}
+                  detail="Blocked from ingestion"
+                />
+                <SignalRow
+                  icon={<Archive className="h-4 w-4" />}
+                  label="Archived Devices"
+                  value={archivedDevices.length}
+                  detail={`${catalogDevices.length} visible in catalog`}
+                />
+              </div>
+
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Data & Access
+                </p>
+                <SignalRow
+                  icon={<Activity className="h-4 w-4" />}
+                  label="Telemetry Last 24h"
+                  value={telemetryLast24h.length}
+                  detail={
+                    latestTelemetryRecord
+                      ? `Latest ${formatDistanceToNow(new Date(latestTelemetryRecord.timestamp), { addSuffix: true })}`
+                      : 'No telemetry received yet'
+                  }
+                />
+                <SignalRow
+                  icon={<Database className="h-4 w-4" />}
+                  label="Telemetry Records"
+                  value={telemetryRecords.length}
+                  detail={`${devicesWithTelemetry} devices have data`}
+                />
+                <SignalRow
+                  icon={<KeyRound className="h-4 w-4" />}
+                  label="Active Grants"
+                  value={activeGrants.length}
+                  detail={`${expiringGrants.length} expiring in 7 days`}
+                />
+                <SignalRow
+                  icon={<UserCheck className="h-4 w-4" />}
+                  label="User Mix"
+                  value={users.length}
+                  detail={`${deviceOwnerCount} owners, ${developerCount} developers, ${adminCount} admins`}
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+            <CardTitle className="text-base font-semibold">Admin Action Queue</CardTitle>
+            <Button variant="outline" size="sm" onClick={() => router.push('/dashboard/access-requests')}>
+              Review
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-4 border-b border-border/70 pb-4">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Pending Access Requests</p>
+                  <p className="text-xs text-muted-foreground">Developer requests waiting for approval.</p>
+                </div>
+                <Badge className="bg-amber-100 text-amber-800">{pendingRequests.length}</Badge>
+              </div>
+
+              <div className="border-b border-border/70 pb-4">
+                <div className="mb-3 flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Stale Online Devices</p>
+                    <p className="text-xs text-muted-foreground">Online devices beyond {STALE_HEARTBEAT_MULTIPLIER} heartbeat windows.</p>
+                  </div>
+                  <Badge variant={staleDevices.length > 0 ? 'default' : 'secondary'}>{staleDevices.length}</Badge>
+                </div>
+                <div className="space-y-2">
+                  {staleDevices.length > 0 ? (
+                    staleDevices.slice(0, 3).map((device) => (
+                      <button
+                        key={device.id}
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left hover:bg-muted"
+                        onClick={() => router.push(`/dashboard/devices/${device.id}`)}
+                      >
+                        <span className="truncate text-sm text-foreground">{device.name}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {formatDistanceToNow(new Date(device.lastSeen), { addSuffix: true })}
+                        </span>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No stale online devices.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="border-b border-border/70 pb-4">
+                <div className="mb-3 flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Expiring Grants</p>
+                    <p className="text-xs text-muted-foreground">Active grants ending within 7 days.</p>
+                  </div>
+                  <Badge variant={expiringGrants.length > 0 ? 'default' : 'secondary'}>{expiringGrants.length}</Badge>
+                </div>
+                <div className="space-y-2">
+                  {expiringGrants.length > 0 ? (
+                    expiringGrants.slice(0, 3).map((grant) => (
+                      <div key={grant.id} className="flex items-center justify-between gap-3 px-2 py-1.5">
+                        <span className="truncate text-sm text-foreground">{grant.developerName}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {format(new Date(grant.expiresAt), 'MMM d')}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No grants expiring soon.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <ShieldCheck className="h-4 w-4 text-primary" />
+                    Active Users
+                  </div>
+                  <p className="mt-1 text-2xl font-semibold text-foreground">{users.length - suspendedUserCount}</p>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <UserX className="h-4 w-4 text-amber-600" />
+                    Suspended
+                  </div>
+                  <p className="mt-1 text-2xl font-semibold text-foreground">{suspendedUserCount}</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">

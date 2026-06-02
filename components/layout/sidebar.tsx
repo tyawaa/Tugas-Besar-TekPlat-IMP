@@ -16,8 +16,9 @@ import {
   Radio,
   Plus,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { getAccessRequests } from '@/lib/api'
 
 interface SidebarProps {
   userRole: 'device_owner' | 'developer' | 'admin'
@@ -51,7 +52,34 @@ const menuItems = {
 export function Sidebar({ userRole }: SidebarProps) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
+  const [pendingAccessRequests, setPendingAccessRequests] = useState(0)
   const items = menuItems[userRole]
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadPendingRequests() {
+      if (userRole !== 'admin' && userRole !== 'device_owner') {
+        setPendingAccessRequests(0)
+        return
+      }
+
+      try {
+        const requests = await getAccessRequests()
+        if (isMounted) {
+          setPendingAccessRequests(requests.filter((request) => request.status === 'pending').length)
+        }
+      } catch {
+        if (isMounted) setPendingAccessRequests(0)
+      }
+    }
+
+    loadPendingRequests()
+
+    return () => {
+      isMounted = false
+    }
+  }, [userRole])
 
   return (
     <aside
@@ -76,6 +104,7 @@ export function Sidebar({ userRole }: SidebarProps) {
           {items.map((item) => {
             const isActive = pathname === item.href || 
               (item.href !== '/dashboard' && pathname.startsWith(item.href))
+            const showPendingBadge = item.href === '/dashboard/access-requests' && pendingAccessRequests > 0
             return (
               <li key={item.href}>
                 <Link
@@ -89,7 +118,17 @@ export function Sidebar({ userRole }: SidebarProps) {
                 >
                   <item.icon className="h-5 w-5 shrink-0" />
                   {!collapsed && <span>{item.label}</span>}
-                  {isActive && !collapsed && <span className="absolute right-2 h-2 w-2 rounded-full bg-lime" />}
+                  {showPendingBadge && !collapsed && (
+                    <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                      {pendingAccessRequests}
+                    </span>
+                  )}
+                  {showPendingBadge && collapsed && (
+                    <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-amber-500" />
+                  )}
+                  {isActive && !collapsed && !showPendingBadge && (
+                    <span className="absolute right-2 h-2 w-2 rounded-full bg-lime" />
+                  )}
                 </Link>
               </li>
             )
