@@ -236,13 +236,6 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
     }
   }
 
-  const showEditDeviceNotice = () => {
-    toast({
-      title: 'Edit device is not connected yet',
-      description: 'Device identity edits are outside this MVP demo flow.',
-    })
-  }
-
   const getDeviceHealth = (devId: string) => {
     return deviceHealth.find(h => h.deviceId === devId)
   }
@@ -312,8 +305,8 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
             </Badge>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={showEditDeviceNotice}>
-              Edit Device
+            <Button asChild variant="outline" size="sm">
+              <Link href="/dashboard/devices">Manage Device</Link>
             </Button>
           </div>
         </div>

@@ -29,7 +29,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Device, AccessRequest, TelemetryRecord, deviceHealth } from '@/lib/mock-data'
-import { getDevices, getAccessRequests, getTelemetryHistory, updateDeviceAction } from '@/lib/api'
+import { deleteDevice, getDevices, getAccessRequests, getTelemetryHistory } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { toast } from '@/hooks/use-toast'
 import { formatDistanceToNow } from 'date-fns'
@@ -91,24 +91,16 @@ export function DeviceOwnerDashboard() {
     return deviceHealth.find(h => h.deviceId === deviceId)
   }
 
-  const handleEditDevice = () => {
-    toast({
-      title: 'Edit device is not connected yet',
-      description: 'Open View Details to manage simulator, credentials, requests, and grants.',
-    })
-  }
-
-  const handleArchiveDevice = async (deviceId: string) => {
-    if (!userId || !userName || !userRole) return
+  const handleDeleteDevice = async (deviceId: string) => {
     try {
-      await updateDeviceAction(deviceId, 'archive', userId, userName, userRole)
+      await deleteDevice(deviceId)
       setRefreshKey((prev) => prev + 1)
       toast({
-        title: 'Device archived',
-        description: 'Archived devices are removed from active device lists and the catalog.',
+        title: 'Device deleted',
+        description: 'The device was removed from active lists and the developer catalog.',
       })
     } catch (error) {
-      console.error('Failed to archive device', error)
+      console.error('Failed to delete device', error)
     }
   }
 
@@ -219,12 +211,14 @@ export function DeviceOwnerDashboard() {
                                 View Details
                               </Link>
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={handleEditDevice}>Edit</DropdownMenuItem>
+                            <DropdownMenuItem asChild>
+                              <Link href="/dashboard/devices">Edit in My Devices</Link>
+                            </DropdownMenuItem>
                             <DropdownMenuItem
                               className="text-destructive"
-                              onClick={() => handleArchiveDevice(device.id)}
+                              onClick={() => handleDeleteDevice(device.id)}
                             >
-                              Archive
+                              Delete
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>

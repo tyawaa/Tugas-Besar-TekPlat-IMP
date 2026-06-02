@@ -72,9 +72,28 @@ export async function registerDevice(payload: Omit<Device, 'id' | 'apiKey' | 'cr
   })
 }
 
+export type DeviceUpdatePayload = Pick<
+  Device,
+  'name' | 'type' | 'location' | 'description' | 'visibility' | 'heartbeatInterval' | 'metrics'
+>
+
+export async function updateDevice(deviceId: string, payload: DeviceUpdatePayload): Promise<Device> {
+  return fetchJson<Device>(`${baseUrl}/devices/${deviceId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ action: 'update', ...payload }),
+  })
+}
+
+export async function deleteDevice(deviceId: string): Promise<Device> {
+  return fetchJson<Device>(`${baseUrl}/devices/${deviceId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ action: 'delete' }),
+  })
+}
+
 export async function updateDeviceAction(
   deviceId: string,
-  action: 'suspend' | 'reinstate' | 'archive' | 'rotateKey',
+  action: 'suspend' | 'reinstate' | 'archive' | 'delete' | 'rotateKey',
   actorId: string,
   actorName: string,
   actorRole: UserRole

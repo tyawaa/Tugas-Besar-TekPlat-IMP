@@ -41,6 +41,8 @@ export async function canReadTelemetry(user: AuthenticatedUser, device: Device):
 
 export function filterDevicesForUser(user: AuthenticatedUser, devices: Device[]): Device[] {
   if (user.role === 'admin') return devices
-  if (user.role === 'device_owner') return devices.filter(device => device.ownerId === user.id)
+  if (user.role === 'device_owner') {
+    return devices.filter(device => device.ownerId === user.id && device.status !== 'archived')
+  }
   return devices.filter(device => device.visibility === 'catalog' && device.status !== 'archived')
 }

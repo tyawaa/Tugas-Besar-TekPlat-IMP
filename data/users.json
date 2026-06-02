@@ -1,0 +1,74 @@
+[
+  {
+    "id": "u1",
+    "name": "Ahmad Fauzi",
+    "email": "ahmad.fauzi@campus.edu",
+    "role": "device_owner",
+    "passwordHash": "scrypt:iotbridge-demo-ahmad.fauzi@campus.edu:65d4d1bf4e9b4a325540d8f04d6c33184b67dbc9f652edb268e990879aa27267696b92d9f419f768dbe803cf5dadb8a006a67c3bc0eeed02d604856eb5682e39",
+    "createdAt": "2024-01-15T00:00:00.000Z",
+    "status": "active"
+  },
+  {
+    "id": "u2",
+    "name": "Siti Rahayu",
+    "email": "siti.rahayu@campus.edu",
+    "role": "developer",
+    "passwordHash": "scrypt:iotbridge-demo-siti.rahayu@campus.edu:15b07b786b5c440528562cf8985c4026b60ff812f8959b8e4eeb2fa57c0e6a362e3faba64c21200d708c2f8064f03f67deaca32998b4772f07d87e1503fae178",
+    "createdAt": "2024-02-20T00:00:00.000Z",
+    "status": "active"
+  },
+  {
+    "id": "u3",
+    "name": "Budi Santoso",
+    "email": "budi.santoso@campus.edu",
+    "role": "developer",
+    "passwordHash": "scrypt:iotbridge-demo-budi.santoso@campus.edu:e9c53ca92738a545e848ae92cf0ccbfe45177045065c05df982f4dfd7fa95dafe1c50db74c9bd698b12a1227c4ccdd79c0953220ccc69d337a510486e621dd24",
+    "createdAt": "2024-03-10T00:00:00.000Z",
+    "status": "active"
+  },
+  {
+    "id": "u4",
+    "name": "Dewi Lestari",
+    "email": "dewi.lestari@campus.edu",
+    "role": "device_owner",
+    "passwordHash": "scrypt:iotbridge-demo-dewi.lestari@campus.edu:41b3ca2167b5f5eb6adbc4f3a81e8be2bd36a90eae98283c1004214c15f156a07aef925799e19519090a454f5ac997cf7cfbb669ca20d139eb069e0700b2c03c",
+    "createdAt": "2024-02-01T00:00:00.000Z",
+    "status": "active"
+  },
+  {
+    "id": "u5",
+    "name": "Admin Campus",
+    "email": "admin@campus.edu",
+    "role": "admin",
+    "passwordHash": "scrypt:iotbridge-demo-admin@campus.edu:0aa129215b7732e0895a19b753b3060e3716b518dd9b72d6272e080094233290e9795f323420c374b219525d72ed484daa9fe36a057d325c166e967d7185227b",
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "status": "active"
+  },
+  {
+    "id": "u6",
+    "name": "Rina Wijaya",
+    "email": "rina.wijaya@campus.edu",
+    "role": "developer",
+    "passwordHash": "scrypt:iotbridge-demo-rina.wijaya@campus.edu:a62428823fb4910f45f966e206dc6f47e904ca63cf1b22d585d137cca6b0401da5111c29978d91de9e7ecbcfe5f8f1a784dc9734320e5968e41d17d3e4742cb2",
+    "createdAt": "2024-04-05T00:00:00.000Z",
+    "status": "suspended"
+  },
+  {
+    "id": "user_1780426469800_e01e09f6",
+    "name": "IoTBridge Admin",
+    "email": "admin@iotbridge.local",
+    "role": "admin",
+    "passwordHash": "scrypt:2793347ede209367bbc9a937f7b431fd:982f428cf39ae3229747b4003365a7a84fd6e6cd3faa470339a2d53d86144c6fdbfbdef8f79bc1115f09b3b8f9746bec48c0aed317204456562eeeed27c14c01",
+    "createdAt": "2026-06-02T18:54:29.910Z",
+    "status": "active"
+  },
+  {
+    "id": "user_1780426552066_c81f641c",
+    "name": "18224122_Tyara Penelope Lumban Gaol",
+    "email": "tyaraxd.06@gmail.com",
+    "role": "device_owner",
+    "passwordHash": "scrypt:a9dc6e8c013e1f52320864810e922eba:d1f26d28bb73410ab79e4c2093f79da5492d7d568e526b65f7a7bafd77434b8192e55362b4d212134ada7168ad7bbd3bb1677b3696a1a922638def6932f89d98",
+    "createdAt": "2026-06-02T18:55:52.208Z",
+    "status": "active"
+  }
+]

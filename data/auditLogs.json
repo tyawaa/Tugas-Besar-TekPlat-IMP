@@ -132,5 +132,27 @@
     "targetType": "device",
     "targetId": "dev_1780359999933_boskg442",
     "outcome": "success"
+  },
+  {
+    "id": "log_323icp70_1780426471382",
+    "timestamp": "2026-06-02T18:54:31.382Z",
+    "actorId": "user_1780426469800_e01e09f6",
+    "actorName": "IoTBridge Admin",
+    "actorRole": "admin",
+    "action": "auth.bootstrap_admin_created",
+    "targetType": "user",
+    "targetId": "user_1780426469800_e01e09f6",
+    "outcome": "success"
+  },
+  {
+    "id": "log_7jh25psd_1780426553798",
+    "timestamp": "2026-06-02T18:55:53.798Z",
+    "actorId": "user_1780426552066_c81f641c",
+    "actorName": "18224122_Tyara Penelope Lumban Gaol",
+    "actorRole": "device_owner",
+    "action": "auth.registered",
+    "targetType": "user",
+    "targetId": "user_1780426552066_c81f641c",
+    "outcome": "success"
   }
 ]
