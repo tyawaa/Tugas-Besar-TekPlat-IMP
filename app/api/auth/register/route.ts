@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import {
   createSession,
   createStoredUser,
+  ensureBootstrapAdmin,
   isValidRole,
   normalizeEmail,
   setSessionCookie,
@@ -10,6 +11,8 @@ import { ServerDataStore } from '@/lib/server-data-store'
 import { toPublicUser } from '@/lib/auth-types'
 
 export async function POST(request: Request) {
+  await ensureBootstrapAdmin()
+
   let body: Record<string, unknown>
   try {
     body = await request.json()
@@ -26,6 +29,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Name, email, password, and role are required.' }, { status: 400 })
   }
 
+  if (role === 'admin') {
+    return NextResponse.json({ error: 'Admin accounts are managed by the system.' }, { status: 403 })
+  }
+
   if (!email.includes('@')) {
     return NextResponse.json({ error: 'Email must be valid.' }, { status: 400 })
   }
@@ -37,16 +44,6 @@ export async function POST(request: Request) {
   const existingUser = await ServerDataStore.getUserByEmail(email)
   if (existingUser) {
     return NextResponse.json({ error: 'An account with this email already exists.' }, { status: 409 })
-  }
-
-  const existingUsers = await ServerDataStore.getAllUsers()
-  const adminRegistrationAllowed =
-    role !== 'admin' ||
-    existingUsers.length === 0 ||
-    process.env.ALLOW_ADMIN_REGISTRATION === 'true'
-
-  if (!adminRegistrationAllowed) {
-    return NextResponse.json({ error: 'Admin registration is only available for the first account.' }, { status: 403 })
   }
 
   const user = await createStoredUser({ name, email, password, role })

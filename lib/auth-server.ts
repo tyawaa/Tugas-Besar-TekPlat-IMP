@@ -8,6 +8,9 @@ import { UserRole } from './mock-data'
 export const SESSION_COOKIE_NAME = 'iotbridge_session'
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const PASSWORD_KEY_LENGTH = 64
+const LOCAL_DEFAULT_ADMIN_EMAIL = 'admin@iotbridge.local'
+const LOCAL_DEFAULT_ADMIN_PASSWORD = 'Admin12345!'
+const DEFAULT_ADMIN_NAME = 'IoTBridge Admin'
 
 export interface AuthenticatedUser extends PublicUser {}
 
@@ -33,6 +36,20 @@ export function verifyPassword(password: string, storedHash: string): boolean {
   const expected = Buffer.from(hash, 'hex')
   if (candidate.length !== expected.length) return false
   return timingSafeEqual(candidate, expected)
+}
+
+function getBootstrapAdminConfig() {
+  const email = process.env.IOTBRIDGE_ADMIN_EMAIL || (process.env.VERCEL ? '' : LOCAL_DEFAULT_ADMIN_EMAIL)
+  const password =
+    process.env.IOTBRIDGE_ADMIN_PASSWORD || (process.env.VERCEL ? '' : LOCAL_DEFAULT_ADMIN_PASSWORD)
+
+  if (!email || !password) return null
+
+  return {
+    name: process.env.IOTBRIDGE_ADMIN_NAME || DEFAULT_ADMIN_NAME,
+    email: normalizeEmail(email),
+    password,
+  }
 }
 
 function hashToken(token: string): string {
@@ -82,6 +99,32 @@ export async function createStoredUser(input: {
   }
 
   return ServerDataStore.addUser(user)
+}
+
+export async function ensureBootstrapAdmin(): Promise<StoredUser | null> {
+  const adminConfig = getBootstrapAdminConfig()
+  if (!adminConfig) return null
+
+  const existingAdmin = await ServerDataStore.getUserByEmail(adminConfig.email)
+  if (existingAdmin) return existingAdmin
+
+  const admin = await createStoredUser({
+    name: adminConfig.name,
+    email: adminConfig.email,
+    password: adminConfig.password,
+    role: 'admin',
+  })
+
+  await ServerDataStore.logAction(
+    admin.id,
+    admin.name,
+    admin.role,
+    'auth.bootstrap_admin_created',
+    'user',
+    admin.id
+  )
+
+  return admin
 }
 
 export async function createSession(userId: string): Promise<{ token: string; session: AuthSession }> {

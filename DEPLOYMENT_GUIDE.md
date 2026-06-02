@@ -54,19 +54,28 @@ Setelah deploy, base URL akan seperti:
 https://nama-project.vercel.app
 ```
 
-## Auth dan Akun Pertama
+## Auth dan Admin
 
 User dan session juga disimpan di Redis. Password disimpan sebagai hash, bukan plaintext.
 
-1. Setelah deploy, buka `/register`.
-2. Buat akun pertama sebagai `Administrator` kalau kamu butuh akses admin.
-3. Setelah ada user pertama, backend hanya mengizinkan role `admin` dibuat lagi kalau env ini diset:
+Admin tidak dibuat lewat halaman register. Backend akan membuat akun admin bootstrap secara otomatis saat auth endpoint pertama kali dipanggil.
 
-```env
-ALLOW_ADMIN_REGISTRATION=true
+Untuk local development, login admin default:
+
+```txt
+Email: admin@iotbridge.local
+Password: Admin12345!
 ```
 
-Untuk penggunaan biasa, biarkan env itu kosong supaya orang lain tidak bisa bebas daftar sebagai admin.
+Untuk Vercel production, set env ini sebelum redeploy:
+
+```env
+IOTBRIDGE_ADMIN_EMAIL=admin@campus.edu
+IOTBRIDGE_ADMIN_PASSWORD=pakai-password-kuat
+IOTBRIDGE_ADMIN_NAME=Admin Campus
+```
+
+Setelah deploy, admin login lewat `/login`. Halaman `/register` hanya untuk `Device Owner` dan `Developer`.
 
 ## Endpoint ESP32
 

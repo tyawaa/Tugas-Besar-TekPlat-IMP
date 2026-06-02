@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Radio, Cpu, Code, ArrowLeft, CheckCircle, Shield } from 'lucide-react'
+import { Radio, Cpu, Code, ArrowLeft, CheckCircle } from 'lucide-react'
 import { UserRole } from '@/lib/mock-data'
 
 export default function RegisterPage() {
@@ -72,7 +72,7 @@ export default function RegisterPage() {
               {/* Role Selection */}
               <div className="space-y-3">
                 <Label>I want to join as</Label>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <button
                     type="button"
                     onClick={() => setSelectedRole('device_owner')}
@@ -115,28 +115,6 @@ export default function RegisterPage() {
                     <div>
                       <p className="font-medium text-foreground">Developer</p>
                       <p className="text-xs text-muted-foreground">Access and use IoT data via API</p>
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedRole('admin')}
-                    className={`relative flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-colors ${
-                      selectedRole === 'admin'
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border hover:border-primary/50'
-                    }`}
-                  >
-                    {selectedRole === 'admin' && (
-                      <CheckCircle className="absolute right-3 top-3 h-4 w-4 text-primary" />
-                    )}
-                    <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${
-                      selectedRole === 'admin' ? 'bg-primary text-primary-foreground' : 'bg-muted'
-                    }`}>
-                      <Shield className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-foreground">Admin</p>
-                      <p className="text-xs text-muted-foreground">Monitor users, devices, and logs</p>
                     </div>
                   </button>
                 </div>

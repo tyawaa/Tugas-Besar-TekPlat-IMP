@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server'
-import { createSession, normalizeEmail, setSessionCookie, verifyPassword } from '@/lib/auth-server'
+import { createSession, ensureBootstrapAdmin, normalizeEmail, setSessionCookie, verifyPassword } from '@/lib/auth-server'
 import { ServerDataStore } from '@/lib/server-data-store'
 import { toPublicUser } from '@/lib/auth-types'
 
 export async function POST(request: Request) {
+  await ensureBootstrapAdmin()
+
   let body: Record<string, unknown>
   try {
     body = await request.json()
