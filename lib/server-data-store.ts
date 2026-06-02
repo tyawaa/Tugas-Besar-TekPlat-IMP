@@ -26,8 +26,14 @@ const FILES = {
   auditLogs: 'auditLogs.json',
 }
 
-const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN
+const REDIS_URL =
+  process.env.UPSTASH_REDIS_REST_URL ||
+  process.env.UPSTASH_REDIS_KV_REST_API_URL ||
+  process.env.KV_REST_API_URL
+const REDIS_TOKEN =
+  process.env.UPSTASH_REDIS_REST_TOKEN ||
+  process.env.UPSTASH_REDIS_KV_REST_API_TOKEN ||
+  process.env.KV_REST_API_TOKEN
 const REDIS_PREFIX = process.env.IOTBRIDGE_REDIS_PREFIX || 'iotbridge'
 
 type CollectionName = keyof typeof FILES

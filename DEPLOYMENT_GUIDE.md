@@ -16,6 +16,13 @@ UPSTASH_REDIS_REST_URL=...
 UPSTASH_REDIS_REST_TOKEN=...
 ```
 
+Kalau integration Vercel memakai prefix custom `UPSTASH_REDIS`, env yang dibuat bisa berbentuk:
+
+```env
+UPSTASH_REDIS_KV_REST_API_URL=...
+UPSTASH_REDIS_KV_REST_API_TOKEN=...
+```
+
 Kode juga mendukung nama env lama:
 
 ```env
