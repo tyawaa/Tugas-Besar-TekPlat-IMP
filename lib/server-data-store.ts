@@ -13,12 +13,15 @@ import {
   telemetryRecords as initialTelemetryRecords,
   auditLogs as initialAuditLogs,
 } from './mock-data'
+import { AuthSession, StoredUser } from './auth-types'
 
 const DATA_DIR =
   process.env.IOTBRIDGE_DATA_DIR ||
   (process.env.VERCEL ? path.join('/tmp', 'iotbridge-data') : path.join(process.cwd(), 'data'))
 
 const FILES = {
+  users: 'users.json',
+  sessions: 'sessions.json',
   devices: 'devices.json',
   accessRequests: 'accessRequests.json',
   accessGrants: 'accessGrants.json',
@@ -141,6 +144,14 @@ function generateId(prefix: string): string {
 }
 
 export class ServerDataStore {
+  private static getUsersFile(): Promise<StoredUser[]> {
+    return readCollection<StoredUser[]>('users', [])
+  }
+
+  private static getSessionsFile(): Promise<AuthSession[]> {
+    return readCollection<AuthSession[]>('sessions', [])
+  }
+
   private static getDevicesFile(): Promise<Device[]> {
     return readCollection<Device[]>('devices', initialDevices)
   }
@@ -179,6 +190,77 @@ export class ServerDataStore {
 
   private static writeAuditLogs(logs: AuditLog[]) {
     return writeCollection('auditLogs', logs)
+  }
+
+  private static writeUsers(users: StoredUser[]) {
+    return writeCollection('users', users)
+  }
+
+  private static writeSessions(sessions: AuthSession[]) {
+    return writeCollection('sessions', sessions)
+  }
+
+  static async getAllUsers(): Promise<StoredUser[]> {
+    return this.getUsersFile()
+  }
+
+  static async getUserById(id: string): Promise<StoredUser | null> {
+    const users = await this.getAllUsers()
+    return users.find(user => user.id === id) || null
+  }
+
+  static async getUserByEmail(email: string): Promise<StoredUser | null> {
+    const normalizedEmail = email.trim().toLowerCase()
+    const users = await this.getAllUsers()
+    return users.find(user => user.email.toLowerCase() === normalizedEmail) || null
+  }
+
+  static async addUser(user: StoredUser): Promise<StoredUser> {
+    const users = await this.getAllUsers()
+    users.push(user)
+    await this.writeUsers(users)
+    return user
+  }
+
+  static async updateUser(id: string, updates: Partial<StoredUser>): Promise<StoredUser | null> {
+    const users = await this.getAllUsers()
+    const index = users.findIndex(user => user.id === id)
+    if (index < 0) return null
+    users[index] = { ...users[index], ...updates }
+    await this.writeUsers(users)
+    return users[index]
+  }
+
+  static async getAllSessions(): Promise<AuthSession[]> {
+    return this.getSessionsFile()
+  }
+
+  static async getSessionByTokenHash(tokenHash: string): Promise<AuthSession | null> {
+    const sessions = await this.getAllSessions()
+    return sessions.find(session => session.tokenHash === tokenHash) || null
+  }
+
+  static async addSession(session: AuthSession): Promise<AuthSession> {
+    const sessions = await this.getAllSessions()
+    sessions.push(session)
+    await this.writeSessions(sessions)
+    return session
+  }
+
+  static async deleteSessionByTokenHash(tokenHash: string): Promise<boolean> {
+    const sessions = await this.getAllSessions()
+    const filtered = sessions.filter(session => session.tokenHash !== tokenHash)
+    if (filtered.length === sessions.length) return false
+    await this.writeSessions(filtered)
+    return true
+  }
+
+  static async pruneExpiredSessions(now = new Date()): Promise<void> {
+    const sessions = await this.getAllSessions()
+    const filtered = sessions.filter(session => new Date(session.expiresAt) > now)
+    if (filtered.length !== sessions.length) {
+      await this.writeSessions(filtered)
+    }
   }
 
   static async getAllDevices(): Promise<Device[]> {

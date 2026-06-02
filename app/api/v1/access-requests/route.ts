@@ -1,18 +1,34 @@
 import { NextResponse } from 'next/server'
 import { ServerDataStore } from '@/lib/server-data-store'
+import { requireCurrentUser } from '@/lib/auth-server'
 
-export async function GET() {
+export async function GET(request: Request) {
+  const currentUser = await requireCurrentUser(request)
+  if (currentUser instanceof NextResponse) return currentUser
+
   const requests = await ServerDataStore.getAllAccessRequests()
-  return NextResponse.json(requests)
+  if (currentUser.role === 'admin') return NextResponse.json(requests)
+
+  if (currentUser.role === 'developer') {
+    return NextResponse.json(requests.filter(request => request.developerId === currentUser.id))
+  }
+
+  const devices = await ServerDataStore.getAllDevices()
+  const ownerDeviceIds = new Set(devices.filter(device => device.ownerId === currentUser.id).map(device => device.id))
+  return NextResponse.json(requests.filter(request => ownerDeviceIds.has(request.deviceId)))
 }
 
 export async function POST(request: Request) {
+  const currentUser = await requireCurrentUser(request)
+  if (currentUser instanceof NextResponse) return currentUser
+
+  if (currentUser.role !== 'developer') {
+    return NextResponse.json({ error: 'Only developers can request device access.' }, { status: 403 })
+  }
+
   const body = await request.json()
   const {
     deviceId,
-    developerId,
-    developerName,
-    developerEmail,
     purpose,
     scopes,
     requestedUntil,
@@ -20,9 +36,6 @@ export async function POST(request: Request) {
 
   if (
     !deviceId ||
-    !developerId ||
-    !developerName ||
-    !developerEmail ||
     !purpose ||
     !Array.isArray(scopes) ||
     !requestedUntil
@@ -33,9 +46,9 @@ export async function POST(request: Request) {
   const requestItem = {
     id: `ar_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
     deviceId,
-    developerId,
-    developerName,
-    developerEmail,
+    developerId: currentUser.id,
+    developerName: currentUser.name,
+    developerEmail: currentUser.email,
     purpose,
     scopes,
     requestedUntil,
@@ -44,7 +57,7 @@ export async function POST(request: Request) {
   }
 
   await ServerDataStore.addAccessRequest(requestItem)
-  await ServerDataStore.logAction(developerId, developerName, 'developer', 'access.requested', 'access_request', requestItem.id)
+  await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'access.requested', 'access_request', requestItem.id)
 
   return NextResponse.json(requestItem, { status: 201 })
 }

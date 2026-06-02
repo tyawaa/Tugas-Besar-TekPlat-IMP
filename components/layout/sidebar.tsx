@@ -20,7 +20,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 
 interface SidebarProps {
-  userRole?: 'device_owner' | 'developer' | 'admin'
+  userRole: 'device_owner' | 'developer' | 'admin'
 }
 
 const menuItems = {
@@ -47,7 +47,7 @@ const menuItems = {
   ],
 }
 
-export function Sidebar({ userRole = 'device_owner' }: SidebarProps) {
+export function Sidebar({ userRole }: SidebarProps) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
   const items = menuItems[userRole]

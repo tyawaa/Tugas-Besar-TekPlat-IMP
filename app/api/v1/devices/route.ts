@@ -1,19 +1,44 @@
 import { NextResponse } from 'next/server'
 import { ServerDataStore } from '@/lib/server-data-store'
+import { requireCurrentUser } from '@/lib/auth-server'
+import { filterDevicesForUser, isGrantActive } from '@/lib/access-control'
 
-export async function GET() {
+export async function GET(request: Request) {
+  const currentUser = await requireCurrentUser(request)
+  if (currentUser instanceof NextResponse) return currentUser
+
   const devices = await ServerDataStore.getAllDevices()
-  return NextResponse.json(devices)
+  if (currentUser.role === 'developer') {
+    const grants = await ServerDataStore.getAllAccessGrants()
+    const grantedDeviceIds = new Set(
+      grants
+        .filter(grant => grant.developerId === currentUser.id && isGrantActive(grant))
+        .map(grant => grant.deviceId)
+    )
+    return NextResponse.json(
+      devices.filter(device =>
+        (device.visibility === 'catalog' && device.status !== 'archived') || grantedDeviceIds.has(device.id)
+      )
+    )
+  }
+
+  return NextResponse.json(filterDevicesForUser(currentUser, devices))
 }
 
 export async function POST(request: Request) {
+  const currentUser = await requireCurrentUser(request)
+  if (currentUser instanceof NextResponse) return currentUser
+
+  if (currentUser.role !== 'device_owner' && currentUser.role !== 'admin') {
+    return NextResponse.json({ error: 'Only device owners can register devices.' }, { status: 403 })
+  }
+
   const body = await request.json()
   const {
     name,
     type,
     location,
     description = '',
-    ownerId,
     visibility,
     heartbeatInterval,
     metrics,
@@ -23,7 +48,6 @@ export async function POST(request: Request) {
     !name ||
     !type ||
     !location ||
-    !ownerId ||
     !visibility ||
     !Number.isFinite(Number(heartbeatInterval)) ||
     !Array.isArray(metrics)
@@ -37,7 +61,7 @@ export async function POST(request: Request) {
     type,
     location,
     description,
-    ownerId,
+    ownerId: currentUser.id,
     status: 'online' as const,
     visibility,
     lastSeen: new Date().toISOString(),
@@ -48,6 +72,6 @@ export async function POST(request: Request) {
   }
 
   await ServerDataStore.addDevice(device)
-  await ServerDataStore.logAction('system', 'Device Registration', 'device_owner', 'device.registered', 'device', device.id)
+  await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'device.registered', 'device', device.id)
   return NextResponse.json(device, { status: 201 })
 }

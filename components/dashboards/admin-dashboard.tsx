@@ -26,9 +26,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Device, AuditLog, users } from '@/lib/mock-data'
-import { getDevices, getAuditLogs, updateDeviceAction } from '@/lib/api'
+import { Device, AuditLog } from '@/lib/mock-data'
+import { getDevices, getAuditLogs, getUsers, updateDeviceAction } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
+import { PublicUser } from '@/lib/auth-types'
 import { toast } from '@/hooks/use-toast'
 import { format } from 'date-fns'
 import { useRouter } from 'next/navigation'
@@ -38,14 +39,16 @@ export function AdminDashboard() {
   const router = useRouter()
   const [devices, setDevices] = useState<Device[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
+  const [users, setUsers] = useState<PublicUser[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
 
   // Load data from API
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [devices, logs] = await Promise.all([getDevices(), getAuditLogs()])
+        const [devices, logs, users] = await Promise.all([getDevices(), getAuditLogs(), getUsers()])
         setDevices(devices)
+        setUsers(users)
         logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
         setAuditLogs(logs.slice(0, 10))
       } catch (error) {
@@ -85,7 +88,7 @@ export function AdminDashboard() {
   const showUserManagementNotice = () => {
     toast({
       title: 'User management is read-only',
-      description: 'This MVP displays mock users, but only device and access actions are persisted.',
+      description: 'User management actions beyond listing are not connected yet.',
     })
   }
 
@@ -147,7 +150,7 @@ export function AdminDashboard() {
                         <StatusBadge status={device.status} />
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
-                        {owner?.name}
+                        {owner?.name || device.ownerId}
                       </TableCell>
                       <TableCell>
                         <DropdownMenu>
@@ -202,45 +205,47 @@ export function AdminDashboard() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {users.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium text-foreground">{user.name}</p>
-                        <p className="text-xs text-muted-foreground">{user.email}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" className="text-xs capitalize">
-                        {user.role.replace('_', ' ')}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={user.status === 'active' ? 'online' : 'suspended'} />
-                    </TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={showUserManagementNotice}>View Profile</DropdownMenuItem>
-                          {user.status === 'active' ? (
+                {users.length > 0 ? (
+                  users.map((user) => (
+                    <TableRow key={user.id}>
+                      <TableCell>
+                        <div>
+                          <p className="font-medium text-foreground">{user.name}</p>
+                          <p className="text-xs text-muted-foreground">{user.email}</p>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className="text-xs capitalize">
+                          {user.role.replace('_', ' ')}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge status="online" />
+                      </TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={showUserManagementNotice}>View Profile</DropdownMenuItem>
                             <DropdownMenuItem className="text-destructive" onClick={showUserManagementNotice}>
                               Disable User
                             </DropdownMenuItem>
-                          ) : (
-                            <DropdownMenuItem className="text-green-600" onClick={showUserManagementNotice}>
-                              Enable User
-                            </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={4} className="py-8 text-center text-sm text-muted-foreground">
+                      No users have registered yet.
                     </TableCell>
                   </TableRow>
-                ))}
+                )}
               </TableBody>
             </Table>
           </CardContent>

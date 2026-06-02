@@ -1,14 +1,28 @@
 import { NextResponse } from 'next/server'
 import { ServerDataStore } from '@/lib/server-data-store'
+import { requireCurrentUser } from '@/lib/auth-server'
+import { canManageDevice } from '@/lib/access-control'
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ requestId: string }> }
 ) {
+  const currentUser = await requireCurrentUser(request)
+  if (currentUser instanceof NextResponse) return currentUser
+
   const { requestId } = await params
   const requestItem = await ServerDataStore.getAccessRequestById(requestId)
   if (!requestItem) {
     return NextResponse.json({ error: 'Access request not found' }, { status: 404 })
+  }
+
+  const device = await ServerDataStore.getDeviceById(requestItem.deviceId)
+  const canView =
+    currentUser.role === 'admin' ||
+    requestItem.developerId === currentUser.id ||
+    (device ? canManageDevice(currentUser, device) : false)
+  if (!canView) {
+    return NextResponse.json({ error: 'You do not have access to this request.' }, { status: 403 })
   }
   return NextResponse.json(requestItem)
 }
@@ -17,12 +31,15 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ requestId: string }> }
 ) {
+  const currentUser = await requireCurrentUser(request)
+  if (currentUser instanceof NextResponse) return currentUser
+
   const { requestId } = await params
   const body = await request.json()
-  const { action, actorId, actorName, actorRole } = body
+  const { action } = body
 
-  if (!action || !actorId || !actorName || !actorRole) {
-    return NextResponse.json({ error: 'Missing action or actor details' }, { status: 400 })
+  if (!action) {
+    return NextResponse.json({ error: 'Missing action' }, { status: 400 })
   }
 
   const requestItem = await ServerDataStore.getAccessRequestById(requestId)
@@ -32,6 +49,15 @@ export async function POST(
 
   if (requestItem.status !== 'pending') {
     return NextResponse.json({ error: 'Access request is not pending' }, { status: 400 })
+  }
+
+  const device = await ServerDataStore.getDeviceById(requestItem.deviceId)
+  if (!device) {
+    return NextResponse.json({ error: 'Device not found' }, { status: 404 })
+  }
+
+  if (!canManageDevice(currentUser, device)) {
+    return NextResponse.json({ error: 'Only the device owner or an admin can action this request.' }, { status: 403 })
   }
 
   let result: { request: typeof requestItem; grant?: any } = { request: requestItem }
@@ -54,7 +80,7 @@ export async function POST(
     }
 
     await ServerDataStore.addAccessGrant(grant)
-    await ServerDataStore.logAction(actorId, actorName, actorRole, 'access.approved', 'access_request', requestId)
+    await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'access.approved', 'access_request', requestId)
 
     result = { request: updatedRequest, grant }
   } else if (action === 'reject') {
@@ -62,7 +88,7 @@ export async function POST(
     if (!updatedRequest) {
       return NextResponse.json({ error: 'Failed to update access request' }, { status: 500 })
     }
-    await ServerDataStore.logAction(actorId, actorName, actorRole, 'access.rejected', 'access_request', requestId)
+    await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'access.rejected', 'access_request', requestId)
     result = { request: updatedRequest }
   } else {
     return NextResponse.json({ error: 'Unsupported action' }, { status: 400 })

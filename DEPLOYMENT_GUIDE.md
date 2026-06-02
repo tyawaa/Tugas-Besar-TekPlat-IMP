@@ -54,6 +54,20 @@ Setelah deploy, base URL akan seperti:
 https://nama-project.vercel.app
 ```
 
+## Auth dan Akun Pertama
+
+User dan session juga disimpan di Redis. Password disimpan sebagai hash, bukan plaintext.
+
+1. Setelah deploy, buka `/register`.
+2. Buat akun pertama sebagai `Administrator` kalau kamu butuh akses admin.
+3. Setelah ada user pertama, backend hanya mengizinkan role `admin` dibuat lagi kalau env ini diset:
+
+```env
+ALLOW_ADMIN_REGISTRATION=true
+```
+
+Untuk penggunaan biasa, biarkan env itu kosong supaya orang lain tidak bisa bebas daftar sebagai admin.
+
 ## Endpoint ESP32
 
 ESP32 mengirim data ke:
@@ -110,8 +124,11 @@ curl -X POST "https://nama-project.vercel.app/api/v1/ingestion/telemetry" \
 Cek data terbaru:
 
 ```bash
-curl "https://nama-project.vercel.app/api/v1/data/devices/dev-001/latest"
+curl "https://nama-project.vercel.app/api/v1/data/devices/dev-001/latest" \
+  -H "Authorization: Bearer token_access_grant_dari_dashboard"
 ```
+
+Endpoint baca data ini diproteksi. Di browser dashboard, cookie login dipakai otomatis. Dari aplikasi eksternal, pakai bearer token dari access grant.
 
 ## Contoh ESP32 Arduino
 

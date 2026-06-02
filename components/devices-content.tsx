@@ -21,9 +21,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Device, deviceHealth, users } from '@/lib/mock-data'
-import { getDevices, updateDeviceAction } from '@/lib/api'
+import { Device, deviceHealth } from '@/lib/mock-data'
+import { getDevices, getUsers, updateDeviceAction } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
+import { PublicUser } from '@/lib/auth-types'
 import { formatDistanceToNow } from 'date-fns'
 import { Search, Plus, Eye, Cpu, Wifi, WifiOff, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
@@ -36,6 +37,7 @@ export function DevicesContent() {
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [visibilityFilter, setVisibilityFilter] = useState<string>('all')
   const [devices, setDevices] = useState<Device[]>([])
+  const [users, setUsers] = useState<PublicUser[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
 
   // Load devices from API
@@ -44,6 +46,8 @@ export function DevicesContent() {
       try {
         const allDevices = await getDevices()
         if (isAdmin) {
+          const allUsers = await getUsers()
+          setUsers(allUsers)
           setDevices(allDevices)
         } else if (userId) {
           setDevices(allDevices.filter((device) => device.ownerId === userId))

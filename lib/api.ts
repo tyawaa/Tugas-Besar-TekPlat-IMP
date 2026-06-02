@@ -1,3 +1,4 @@
+import { PublicUser } from './auth-types'
 import { AccessGrant, AccessRequest, AuditLog, Device, TelemetryRecord, UserRole } from './mock-data'
 
 const baseUrl = '/api/v1'
@@ -5,6 +6,7 @@ const baseUrl = '/api/v1'
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const res = await fetch(input, {
     ...init,
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
       ...(init?.headers || {}),
@@ -17,6 +19,42 @@ async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
   }
 
   return (await res.json()) as T
+}
+
+export async function registerAccount(payload: {
+  name: string
+  email: string
+  password: string
+  role: UserRole
+}): Promise<{ user: PublicUser }> {
+  return fetchJson<{ user: PublicUser }>('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function loginAccount(payload: {
+  email: string
+  password: string
+}): Promise<{ user: PublicUser }> {
+  return fetchJson<{ user: PublicUser }>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function logoutAccount(): Promise<{ success: boolean }> {
+  return fetchJson<{ success: boolean }>('/api/auth/logout', {
+    method: 'POST',
+  })
+}
+
+export async function getCurrentAccount(): Promise<{ user: PublicUser | null }> {
+  return fetchJson<{ user: PublicUser | null }>('/api/auth/me')
+}
+
+export async function getUsers(): Promise<PublicUser[]> {
+  return fetchJson<PublicUser[]>('/api/auth/users')
 }
 
 export async function getDevices(): Promise<Device[]> {

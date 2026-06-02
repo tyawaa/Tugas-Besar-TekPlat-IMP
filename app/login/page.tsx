@@ -8,28 +8,30 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Radio, Cpu, Code, ArrowLeft } from 'lucide-react'
-
-const MOCK_USERS = {
-  device_owner: { id: 'u1', name: 'Ahmad Fauzi', email: 'ahmad@campus.edu' },
-  developer: { id: 'u2', name: 'Siti Rahayu', email: 'siti@campus.edu' },
-  admin: { id: 'u5', name: 'Admin Campus', email: 'admin@campus.edu' },
-}
+import { Radio, ArrowLeft } from 'lucide-react'
 
 export default function LoginPage() {
   const router = useRouter()
   const { login } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [selectedRole, setSelectedRole] = useState<'device_owner' | 'developer' | 'admin' | null>(null)
+  const [error, setError] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    const role = selectedRole || 'device_owner'
-    const user = MOCK_USERS[role]
-    login(user.id, user.name, user.email, role)
-    const redirect = new URLSearchParams(window.location.search).get('redirect')
-    router.push(redirect?.startsWith('/') ? redirect : '/dashboard')
+    setError('')
+    setIsSubmitting(true)
+
+    try {
+      await login(email, password)
+      const redirect = new URLSearchParams(window.location.search).get('redirect')
+      router.push(redirect?.startsWith('/') ? redirect : '/dashboard')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sign in.')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -59,7 +61,7 @@ export default function LoginPage() {
               Enter your credentials to access your account
             </CardDescription>
             <p className="mt-3 text-xs text-muted-foreground">
-              Demo mode: select a role to preview the role-based dashboard
+              Sign in with the account you created.
             </p>
           </CardHeader>
           <CardContent>
@@ -89,51 +91,14 @@ export default function LoginPage() {
                 />
               </div>
 
-              {/* Role Selection for Demo */}
-              <div className="space-y-2">
-                <Label>Demo: Select Role</Label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedRole('device_owner')}
-                    className={`flex flex-col items-center gap-1 rounded-lg border p-3 transition-colors ${
-                      selectedRole === 'device_owner'
-                        ? 'border-primary bg-primary/5 text-primary'
-                        : 'border-border hover:border-primary/50'
-                    }`}
-                  >
-                    <Cpu className="h-5 w-5" />
-                    <span className="text-xs font-medium">Owner</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedRole('developer')}
-                    className={`flex flex-col items-center gap-1 rounded-lg border p-3 transition-colors ${
-                      selectedRole === 'developer'
-                        ? 'border-primary bg-primary/5 text-primary'
-                        : 'border-border hover:border-primary/50'
-                    }`}
-                  >
-                    <Code className="h-5 w-5" />
-                    <span className="text-xs font-medium">Developer</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedRole('admin')}
-                    className={`flex flex-col items-center gap-1 rounded-lg border p-3 transition-colors ${
-                      selectedRole === 'admin'
-                        ? 'border-primary bg-primary/5 text-primary'
-                        : 'border-border hover:border-primary/50'
-                    }`}
-                  >
-                    <Radio className="h-5 w-5" />
-                    <span className="text-xs font-medium">Admin</span>
-                  </button>
-                </div>
-              </div>
+              {error && (
+                <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {error}
+                </p>
+              )}
 
-              <Button type="submit" className="w-full">
-                Sign in
+              <Button type="submit" className="w-full" disabled={isSubmitting}>
+                {isSubmitting ? 'Signing in...' : 'Sign in'}
               </Button>
             </form>
 

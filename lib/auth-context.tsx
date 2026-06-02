@@ -2,15 +2,17 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { UserRole } from './mock-data'
-import { initializeMockData } from './init-mock-data'
+import { getCurrentAccount, loginAccount, logoutAccount, registerAccount } from './api'
+import { PublicUser } from './auth-types'
 
 interface AuthContextType {
   userId: string | null
   userName: string | null
   userRole: UserRole | null
   userEmail: string | null
-  login: (userId: string, userName: string, email: string, role: UserRole) => void
-  logout: () => void
+  login: (email: string, password: string) => Promise<void>
+  register: (payload: { name: string; email: string; password: string; role: UserRole }) => Promise<void>
+  logout: () => Promise<void>
   isLoading: boolean
 }
 
@@ -23,44 +25,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userEmail, setUserEmail] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  // Load from localStorage on mount
-  useEffect(() => {
-    // Initialize mock data first
-    initializeMockData()
-    
-    try {
-      const stored = localStorage.getItem('iotbridge_auth')
-      if (stored) {
-        const auth = JSON.parse(stored)
-        setUserId(auth.userId)
-        setUserName(auth.userName)
-        setUserRole(auth.userRole)
-        setUserEmail(auth.userEmail)
-      }
-    } catch (err) {
-      console.error('Error loading auth:', err)
-    }
-    setIsLoading(false)
-  }, [])
-
-  const login = (userId: string, userName: string, email: string, role: UserRole) => {
-    setUserId(userId)
-    setUserName(userName)
-    setUserRole(role)
-    setUserEmail(email)
-    localStorage.setItem('iotbridge_auth', JSON.stringify({ userId, userName, userRole: role, userEmail: email }))
+  const setUser = (user: PublicUser | null) => {
+    setUserId(user?.id || null)
+    setUserName(user?.name || null)
+    setUserRole(user?.role || null)
+    setUserEmail(user?.email || null)
   }
 
-  const logout = () => {
-    setUserId(null)
-    setUserName(null)
-    setUserRole(null)
-    setUserEmail(null)
-    localStorage.removeItem('iotbridge_auth')
+  useEffect(() => {
+    const loadSession = async () => {
+      try {
+        const { user } = await getCurrentAccount()
+        setUser(user)
+      } catch (err) {
+        console.error('Error loading auth session:', err)
+        setUser(null)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadSession()
+  }, [])
+
+  const login = async (email: string, password: string) => {
+    const { user } = await loginAccount({ email, password })
+    setUser(user)
+  }
+
+  const register = async (payload: { name: string; email: string; password: string; role: UserRole }) => {
+    const { user } = await registerAccount(payload)
+    setUser(user)
+  }
+
+  const logout = async () => {
+    try {
+      await logoutAccount()
+    } finally {
+      setUser(null)
+    }
   }
 
   return (
-    <AuthContext.Provider value={{ userId, userName, userRole, userEmail, login, logout, isLoading }}>
+    <AuthContext.Provider value={{ userId, userName, userRole, userEmail, login, register, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   )

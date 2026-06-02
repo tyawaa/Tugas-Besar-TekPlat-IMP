@@ -1,0 +1,158 @@
+import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'crypto'
+import { cookies } from 'next/headers'
+import { NextResponse } from 'next/server'
+import { ServerDataStore } from './server-data-store'
+import { AuthSession, PublicUser, StoredUser, toPublicUser } from './auth-types'
+import { UserRole } from './mock-data'
+
+export const SESSION_COOKIE_NAME = 'iotbridge_session'
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const PASSWORD_KEY_LENGTH = 64
+
+export interface AuthenticatedUser extends PublicUser {}
+
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase()
+}
+
+export function isValidRole(role: unknown): role is UserRole {
+  return role === 'device_owner' || role === 'developer' || role === 'admin'
+}
+
+export function hashPassword(password: string): string {
+  const salt = randomBytes(16).toString('hex')
+  const hash = scryptSync(password, salt, PASSWORD_KEY_LENGTH).toString('hex')
+  return `scrypt:${salt}:${hash}`
+}
+
+export function verifyPassword(password: string, storedHash: string): boolean {
+  const [algorithm, salt, hash] = storedHash.split(':')
+  if (algorithm !== 'scrypt' || !salt || !hash) return false
+
+  const candidate = Buffer.from(scryptSync(password, salt, PASSWORD_KEY_LENGTH).toString('hex'), 'hex')
+  const expected = Buffer.from(hash, 'hex')
+  if (candidate.length !== expected.length) return false
+  return timingSafeEqual(candidate, expected)
+}
+
+function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex')
+}
+
+function createSessionToken(): string {
+  return randomBytes(32).toString('base64url')
+}
+
+function parseCookies(request: Request): Record<string, string> {
+  const header = request.headers.get('cookie') || ''
+  return header.split(';').reduce<Record<string, string>>((cookies, part) => {
+    const [rawName, ...rawValue] = part.trim().split('=')
+    if (!rawName) return cookies
+    cookies[rawName] = decodeURIComponent(rawValue.join('='))
+    return cookies
+  }, {})
+}
+
+async function getSessionTokenFromRequest(request: Request): Promise<string | null> {
+  const headerToken = parseCookies(request)[SESSION_COOKIE_NAME]
+  if (headerToken) return headerToken
+
+  try {
+    const cookieStore = await cookies()
+    return cookieStore.get(SESSION_COOKIE_NAME)?.value || null
+  } catch {
+    return null
+  }
+}
+
+export async function createStoredUser(input: {
+  name: string
+  email: string
+  password: string
+  role: UserRole
+}): Promise<StoredUser> {
+  const user: StoredUser = {
+    id: `user_${Date.now()}_${randomBytes(4).toString('hex')}`,
+    name: input.name.trim(),
+    email: normalizeEmail(input.email),
+    role: input.role,
+    passwordHash: hashPassword(input.password),
+    createdAt: new Date().toISOString(),
+    status: 'active',
+  }
+
+  return ServerDataStore.addUser(user)
+}
+
+export async function createSession(userId: string): Promise<{ token: string; session: AuthSession }> {
+  await ServerDataStore.pruneExpiredSessions()
+
+  const token = createSessionToken()
+  const now = new Date()
+  const session: AuthSession = {
+    id: `sess_${Date.now()}_${randomBytes(4).toString('hex')}`,
+    userId,
+    tokenHash: hashToken(token),
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + SESSION_TTL_MS).toISOString(),
+  }
+
+  await ServerDataStore.addSession(session)
+  return { token, session }
+}
+
+export async function destroySessionFromRequest(request: Request): Promise<void> {
+  const token = await getSessionTokenFromRequest(request)
+  if (!token) return
+  await ServerDataStore.deleteSessionByTokenHash(hashToken(token))
+}
+
+export async function getCurrentUser(request: Request): Promise<AuthenticatedUser | null> {
+  const token = await getSessionTokenFromRequest(request)
+  if (!token) return null
+
+  const session = await ServerDataStore.getSessionByTokenHash(hashToken(token))
+  if (!session) return null
+
+  if (new Date(session.expiresAt) <= new Date()) {
+    await ServerDataStore.deleteSessionByTokenHash(session.tokenHash)
+    return null
+  }
+
+  const user = await ServerDataStore.getUserById(session.userId)
+  if (!user || user.status !== 'active') return null
+
+  return toPublicUser(user)
+}
+
+export async function requireCurrentUser(request: Request): Promise<AuthenticatedUser | NextResponse> {
+  const user = await getCurrentUser(request)
+  if (!user) {
+    return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
+  }
+  return user
+}
+
+export function setSessionCookie(response: NextResponse, token: string) {
+  response.cookies.set({
+    name: SESSION_COOKIE_NAME,
+    value: token,
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: Math.floor(SESSION_TTL_MS / 1000),
+  })
+}
+
+export function clearSessionCookie(response: NextResponse) {
+  response.cookies.set({
+    name: SESSION_COOKIE_NAME,
+    value: '',
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: 0,
+  })
+}

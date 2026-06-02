@@ -74,7 +74,7 @@ export default function DataExplorerPage() {
     ? telemetryData[telemetryData.length - 1] 
     : null
 
-  // Generate chart data from actual telemetry in localStorage
+  // Generate chart data from backend telemetry records.
   const generateChartData = () => {
     if (telemetryData.length === 0) return []
     

@@ -22,15 +22,15 @@ export default function SettingsPage() {
     }
   }
 
-  const handleLogout = () => {
-    logout()
+  const handleLogout = async () => {
+    await logout()
     router.push('/login')
   }
 
   const showDemoNotice = (setting: string) => {
     toast({
       title: `${setting} is not connected yet`,
-      description: 'This frontend MVP uses mocked authentication and account data.',
+      description: 'Profile editing is not connected yet, but sign-in uses backend sessions.',
     })
   }
 

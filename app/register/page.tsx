@@ -8,22 +8,33 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Radio, Cpu, Code, ArrowLeft, CheckCircle } from 'lucide-react'
+import { Radio, Cpu, Code, ArrowLeft, CheckCircle, Shield } from 'lucide-react'
+import { UserRole } from '@/lib/mock-data'
 
 export default function RegisterPage() {
   const router = useRouter()
-  const { login } = useAuth()
+  const { register } = useAuth()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [selectedRole, setSelectedRole] = useState<'device_owner' | 'developer'>('device_owner')
+  const [selectedRole, setSelectedRole] = useState<UserRole>('device_owner')
+  const [error, setError] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
-    const userId = `user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-    login(userId, name.trim(), email.trim(), selectedRole)
-    const redirect = new URLSearchParams(window.location.search).get('redirect')
-    router.push(redirect?.startsWith('/') ? redirect : '/dashboard')
+    setError('')
+    setIsSubmitting(true)
+
+    try {
+      await register({ name, email, password, role: selectedRole })
+      const redirect = new URLSearchParams(window.location.search).get('redirect')
+      router.push(redirect?.startsWith('/') ? redirect : '/dashboard')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create account.')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -53,7 +64,7 @@ export default function RegisterPage() {
               Join IoTBridge as a device owner or developer
             </CardDescription>
             <p className="mt-3 text-xs text-muted-foreground">
-              This MVP creates a local demo session. Backend authentication will be connected later.
+              Create a backend account secured with a hashed password and session cookie.
             </p>
           </CardHeader>
           <CardContent>
@@ -61,7 +72,7 @@ export default function RegisterPage() {
               {/* Role Selection */}
               <div className="space-y-3">
                 <Label>I want to join as</Label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <button
                     type="button"
                     onClick={() => setSelectedRole('device_owner')}
@@ -106,6 +117,28 @@ export default function RegisterPage() {
                       <p className="text-xs text-muted-foreground">Access and use IoT data via API</p>
                     </div>
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedRole('admin')}
+                    className={`relative flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-colors ${
+                      selectedRole === 'admin'
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:border-primary/50'
+                    }`}
+                  >
+                    {selectedRole === 'admin' && (
+                      <CheckCircle className="absolute right-3 top-3 h-4 w-4 text-primary" />
+                    )}
+                    <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${
+                      selectedRole === 'admin' ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                    }`}>
+                      <Shield className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-foreground">Admin</p>
+                      <p className="text-xs text-muted-foreground">Monitor users, devices, and logs</p>
+                    </div>
+                  </button>
                 </div>
               </div>
 
@@ -145,11 +178,18 @@ export default function RegisterPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   className="bg-background"
                   required
+                  minLength={8}
                 />
               </div>
 
-              <Button type="submit" className="w-full bg-primary hover:bg-primary/90">
-                Create Account
+              {error && (
+                <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {error}
+                </p>
+              )}
+
+              <Button type="submit" className="w-full bg-primary hover:bg-primary/90" disabled={isSubmitting}>
+                {isSubmitting ? 'Creating account...' : 'Create Account'}
               </Button>
             </form>
 

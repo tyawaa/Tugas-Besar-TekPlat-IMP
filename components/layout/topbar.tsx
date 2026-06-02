@@ -19,8 +19,8 @@ import { toast } from '@/hooks/use-toast'
 
 interface TopBarProps {
   title: string
-  userRole?: 'device_owner' | 'developer' | 'admin'
-  userName?: string
+  userRole: 'device_owner' | 'developer' | 'admin'
+  userName: string
 }
 
 const roleLabels = {
@@ -29,12 +29,12 @@ const roleLabels = {
   admin: 'Administrator',
 }
 
-export function TopBar({ title, userRole = 'device_owner', userName = 'Ahmad Fauzi' }: TopBarProps) {
+export function TopBar({ title, userRole, userName }: TopBarProps) {
   const router = useRouter()
   const { logout } = useAuth()
 
-  const handleSignOut = () => {
-    logout()
+  const handleSignOut = async () => {
+    await logout()
     router.push('/login')
   }
 
