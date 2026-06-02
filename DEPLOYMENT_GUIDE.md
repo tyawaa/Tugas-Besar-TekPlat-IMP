@@ -77,6 +77,18 @@ IOTBRIDGE_ADMIN_NAME=Admin Campus
 
 Setelah deploy, admin login lewat `/login`. Halaman `/register` hanya untuk `Device Owner` dan `Developer`.
 
+Selama database utama belum aktif, backend akan seed akun demo dari data mock utama agar relasi `ownerId`, access request, dan access grant tetap tersambung:
+
+```txt
+Device Owner: ahmad.fauzi@campus.edu
+Developer: siti.rahayu@campus.edu
+Developer: budi.santoso@campus.edu
+Admin Demo: admin@campus.edu
+Password: Demo12345!
+```
+
+Ubah password demo dengan env `IOTBRIDGE_DEMO_USER_PASSWORD`, atau matikan seed demo dengan `IOTBRIDGE_SEED_DEMO_USERS=false`.
+
 ## Endpoint ESP32
 
 ESP32 mengirim data ke:

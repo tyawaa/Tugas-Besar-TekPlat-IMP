@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { scryptSync } from 'crypto'
 import {
   Device,
   AccessRequest,
@@ -7,6 +8,7 @@ import {
   TelemetryRecord,
   AuditLog,
   UserRole,
+  users as mockUsers,
   devices as initialDevices,
   accessRequests as initialAccessRequests,
   accessGrants as initialAccessGrants,
@@ -38,6 +40,8 @@ const REDIS_TOKEN =
   process.env.UPSTASH_REDIS_KV_REST_API_TOKEN ||
   process.env.KV_REST_API_TOKEN
 const REDIS_PREFIX = process.env.IOTBRIDGE_REDIS_PREFIX || 'iotbridge'
+const DEMO_USER_PASSWORD = process.env.IOTBRIDGE_DEMO_USER_PASSWORD || 'Demo12345!'
+const SHOULD_SEED_DEMO_USERS = process.env.IOTBRIDGE_SEED_DEMO_USERS !== 'false'
 
 type CollectionName = keyof typeof FILES
 
@@ -143,9 +147,29 @@ function generateId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`
 }
 
+function createDemoPasswordHash(email: string): string {
+  const salt = `iotbridge-demo-${email.toLowerCase()}`
+  const hash = scryptSync(DEMO_USER_PASSWORD, salt, 64).toString('hex')
+  return `scrypt:${salt}:${hash}`
+}
+
+function createInitialUsers(): StoredUser[] {
+  if (!SHOULD_SEED_DEMO_USERS) return []
+
+  return mockUsers.map(user => ({
+    id: user.id,
+    name: user.name,
+    email: user.email.toLowerCase(),
+    role: user.role,
+    passwordHash: createDemoPasswordHash(user.email),
+    createdAt: new Date(user.createdAt).toISOString(),
+    status: user.status,
+  }))
+}
+
 export class ServerDataStore {
   private static getUsersFile(): Promise<StoredUser[]> {
-    return readCollection<StoredUser[]>('users', [])
+    return readCollection<StoredUser[]>('users', createInitialUsers())
   }
 
   private static getSessionsFile(): Promise<AuthSession[]> {
@@ -201,7 +225,20 @@ export class ServerDataStore {
   }
 
   static async getAllUsers(): Promise<StoredUser[]> {
-    return this.getUsersFile()
+    const users = await this.getUsersFile()
+    if (!SHOULD_SEED_DEMO_USERS) return users
+
+    const existingIds = new Set(users.map(user => user.id))
+    const existingEmails = new Set(users.map(user => user.email.toLowerCase()))
+    const missingSeedUsers = createInitialUsers().filter(
+      user => !existingIds.has(user.id) && !existingEmails.has(user.email.toLowerCase())
+    )
+
+    if (missingSeedUsers.length === 0) return users
+
+    const mergedUsers = [...users, ...missingSeedUsers]
+    await this.writeUsers(mergedUsers)
+    return mergedUsers
   }
 
   static async getUserById(id: string): Promise<StoredUser | null> {
