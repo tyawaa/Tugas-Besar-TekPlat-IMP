@@ -1,6 +1,7 @@
 import { AccessGrant, Device } from './mock-data'
 import { ServerDataStore } from './server-data-store'
 import { AuthenticatedUser } from './auth-server'
+import { hasUserRole } from './auth-types'
 
 export function isGrantActive(grant: AccessGrant): boolean {
   return new Date(grant.expiresAt) >= new Date()
@@ -25,24 +26,33 @@ export async function getGrantFromBearerToken(request: Request, deviceId: string
 }
 
 export function canManageDevice(user: AuthenticatedUser, device: Device): boolean {
-  return user.role === 'admin' || device.ownerId === user.id
+  return hasUserRole(user, 'admin') || device.ownerId === user.id
 }
 
 export async function canViewDevice(user: AuthenticatedUser, device: Device): Promise<boolean> {
-  if (user.role === 'admin' || device.ownerId === user.id) return true
+  if (hasUserRole(user, 'admin') || device.ownerId === user.id) return true
   if (device.visibility === 'catalog' && device.status !== 'archived') return true
   return Boolean(await getActiveGrantForDeveloper(device.id, user.id))
 }
 
 export async function canReadTelemetry(user: AuthenticatedUser, device: Device): Promise<boolean> {
-  if (user.role === 'admin' || device.ownerId === user.id) return true
+  if (hasUserRole(user, 'admin') || device.ownerId === user.id) return true
   return Boolean(await getActiveGrantForDeveloper(device.id, user.id))
 }
 
 export function filterDevicesForUser(user: AuthenticatedUser, devices: Device[]): Device[] {
-  if (user.role === 'admin') return devices
-  if (user.role === 'device_owner') {
-    return devices.filter(device => device.ownerId === user.id && device.status !== 'archived')
+  if (hasUserRole(user, 'admin')) return devices
+
+  const visibleDeviceIds = new Set<string>()
+  if (hasUserRole(user, 'device_owner')) {
+    devices
+      .filter(device => device.ownerId === user.id && device.status !== 'archived')
+      .forEach(device => visibleDeviceIds.add(device.id))
   }
-  return devices.filter(device => device.visibility === 'catalog' && device.status !== 'archived')
+  if (hasUserRole(user, 'developer')) {
+    devices
+      .filter(device => device.visibility === 'catalog' && device.status !== 'archived')
+      .forEach(device => visibleDeviceIds.add(device.id))
+  }
+  return devices.filter(device => visibleDeviceIds.has(device.id))
 }

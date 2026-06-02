@@ -67,6 +67,13 @@ export async function updateUserAction(
   })
 }
 
+export async function updateUserRoles(userId: string, roles: UserRole[]): Promise<PublicUser> {
+  return fetchJson<PublicUser>(`/api/auth/users/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ action: 'setRoles', roles }),
+  })
+}
+
 export async function getDevices(): Promise<Device[]> {
   return fetchJson<Device[]>(`${baseUrl}/devices`)
 }

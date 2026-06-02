@@ -3,6 +3,7 @@
 import { DashboardLayout } from '@/components/layout/dashboard-layout'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { LogOut } from 'lucide-react'
 import { useAuth } from '@/lib/auth-context'
@@ -10,7 +11,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from '@/hooks/use-toast'
 
 export default function SettingsPage() {
-  const { userName, userEmail, userRole, logout } = useAuth()
+  const { userName, userEmail, userRole, userRoles, logout } = useAuth()
   const router = useRouter()
 
   const getRoleDisplayName = (role: string | null) => {
@@ -56,8 +57,18 @@ export default function SettingsPage() {
               <p className="text-sm text-muted-foreground mt-1">{userEmail || 'Not set'}</p>
             </div>
             <div>
-              <label className="text-sm font-medium">Role</label>
+              <label className="text-sm font-medium">Active Mode</label>
               <p className="text-sm text-muted-foreground mt-1">{getRoleDisplayName(userRole)}</p>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Roles</label>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {userRoles.map((role) => (
+                  <Badge key={role} variant="secondary">
+                    {getRoleDisplayName(role)}
+                  </Badge>
+                ))}
+              </div>
             </div>
             <Separator />
             <Button variant="outline" onClick={() => showDemoNotice('Edit profile')}>

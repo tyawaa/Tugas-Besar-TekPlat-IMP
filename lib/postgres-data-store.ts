@@ -12,7 +12,7 @@ import {
   devices as initialDevices,
   telemetryRecords as initialTelemetryRecords,
 } from './mock-data'
-import { AuthSession, StoredUser } from './auth-types'
+import { AuthSession, StoredUser, normalizeStoredUser, normalizeUserRoles } from './auth-types'
 import { createInitialDemoUsers } from './demo-users'
 
 const POSTGRES_URL =
@@ -35,6 +35,7 @@ interface UserRow {
   name: string
   email: string
   role: UserRole
+  roles: unknown
   password_hash: string
   created_at: string
   status: 'active' | 'suspended'
@@ -180,6 +181,7 @@ async function createTables(client: PoolClient): Promise<void> {
       name TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
       role TEXT NOT NULL CHECK (role IN ('device_owner', 'developer', 'admin')),
+      roles JSONB NOT NULL DEFAULT '[]'::jsonb,
       password_hash TEXT NOT NULL,
       created_at TEXT NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('active', 'suspended'))
@@ -264,6 +266,15 @@ async function createTables(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_access_grants_token ON access_grants (token);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_occurred_at ON audit_logs (occurred_at DESC);
   `)
+
+  await client.query(`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS roles JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+    UPDATE users
+    SET roles = to_jsonb(ARRAY[role])
+    WHERE roles = '[]'::jsonb;
+  `)
 }
 
 async function seedInitialData(client: PoolClient): Promise<void> {
@@ -330,8 +341,8 @@ async function seedDemoUsers(client: PoolClient): Promise<void> {
   const users = createInitialDemoUsers()
   for (const user of users) {
     await client.query(
-      `INSERT INTO users (id, name, email, role, password_hash, created_at, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO users (id, name, email, role, roles, password_hash, created_at, status)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
        ON CONFLICT DO NOTHING`,
       userParams(user)
     )
@@ -374,15 +385,16 @@ function parseJsonObject<T extends JsonObject>(value: unknown): T {
 }
 
 function mapUser(row: UserRow): StoredUser {
-  return {
+  return normalizeStoredUser({
     id: row.id,
     name: row.name,
     email: row.email,
     role: row.role,
+    roles: normalizeUserRoles(row.role, parseJsonArray<UserRole>(row.roles)),
     passwordHash: row.password_hash,
     createdAt: row.created_at,
     status: row.status,
-  }
+  })
 }
 
 function mapSession(row: SessionRow): AuthSession {
@@ -466,7 +478,17 @@ function mapAuditLog(row: AuditLogRow): AuditLog {
 }
 
 function userParams(user: StoredUser): unknown[] {
-  return [user.id, user.name, user.email, user.role, user.passwordHash, user.createdAt, user.status]
+  const normalizedUser = normalizeStoredUser(user)
+  return [
+    normalizedUser.id,
+    normalizedUser.name,
+    normalizedUser.email,
+    normalizedUser.role,
+    JSON.stringify(normalizedUser.roles),
+    normalizedUser.passwordHash,
+    normalizedUser.createdAt,
+    normalizedUser.status,
+  ]
 }
 
 function sessionParams(session: AuthSession): unknown[] {
@@ -540,12 +562,13 @@ function auditLogParams(log: AuditLog): unknown[] {
 
 async function upsertUser(user: StoredUser): Promise<StoredUser> {
   const rows = await query<UserRow>(
-    `INSERT INTO users (id, name, email, role, password_hash, created_at, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO users (id, name, email, role, roles, password_hash, created_at, status)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name,
        email = EXCLUDED.email,
        role = EXCLUDED.role,
+       roles = EXCLUDED.roles,
        password_hash = EXCLUDED.password_hash,
        created_at = EXCLUDED.created_at,
        status = EXCLUDED.status

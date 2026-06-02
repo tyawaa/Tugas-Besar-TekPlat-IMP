@@ -2,28 +2,38 @@ import { NextResponse } from 'next/server'
 import { ServerDataStore } from '@/lib/server-data-store'
 import { requireCurrentUser } from '@/lib/auth-server'
 import { isGrantActive } from '@/lib/access-control'
+import { hasUserRole } from '@/lib/auth-types'
 
 export async function GET(request: Request) {
   const currentUser = await requireCurrentUser(request)
   if (currentUser instanceof NextResponse) return currentUser
 
   const requests = await ServerDataStore.getAllAccessRequests()
-  if (currentUser.role === 'admin') return NextResponse.json(requests)
+  if (hasUserRole(currentUser, 'admin')) return NextResponse.json(requests)
 
-  if (currentUser.role === 'developer') {
-    return NextResponse.json(requests.filter(request => request.developerId === currentUser.id))
+  const visibleRequestIds = new Set<string>()
+  if (hasUserRole(currentUser, 'developer')) {
+    requests
+      .filter(request => request.developerId === currentUser.id)
+      .forEach(request => visibleRequestIds.add(request.id))
   }
 
-  const devices = await ServerDataStore.getAllDevices()
-  const ownerDeviceIds = new Set(devices.filter(device => device.ownerId === currentUser.id).map(device => device.id))
-  return NextResponse.json(requests.filter(request => ownerDeviceIds.has(request.deviceId)))
+  if (hasUserRole(currentUser, 'device_owner')) {
+    const devices = await ServerDataStore.getAllDevices()
+    const ownerDeviceIds = new Set(devices.filter(device => device.ownerId === currentUser.id).map(device => device.id))
+    requests
+      .filter(request => ownerDeviceIds.has(request.deviceId))
+      .forEach(request => visibleRequestIds.add(request.id))
+  }
+
+  return NextResponse.json(requests.filter(request => visibleRequestIds.has(request.id)))
 }
 
 export async function POST(request: Request) {
   const currentUser = await requireCurrentUser(request)
   if (currentUser instanceof NextResponse) return currentUser
 
-  if (currentUser.role !== 'developer') {
+  if (!hasUserRole(currentUser, 'developer')) {
     return NextResponse.json({ error: 'Only developers can request device access.' }, { status: 403 })
   }
 

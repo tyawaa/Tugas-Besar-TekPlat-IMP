@@ -9,7 +9,9 @@ interface AuthContextType {
   userId: string | null
   userName: string | null
   userRole: UserRole | null
+  userRoles: UserRole[]
   userEmail: string | null
+  setActiveRole: (role: UserRole) => void
   login: (email: string, password: string) => Promise<void>
   register: (payload: { name: string; email: string; password: string; role: UserRole }) => Promise<void>
   logout: () => Promise<void>
@@ -17,18 +19,32 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
+const ACTIVE_ROLE_STORAGE_KEY = 'iotbridge_active_role'
+
+function getInitialActiveRole(user: PublicUser): UserRole {
+  const roles = user.roles?.length ? user.roles : [user.role]
+
+  if (typeof window !== 'undefined') {
+    const storedRole = window.localStorage.getItem(ACTIVE_ROLE_STORAGE_KEY) as UserRole | null
+    if (storedRole && roles.includes(storedRole)) return storedRole
+  }
+
+  return roles.includes(user.role) ? user.role : roles[0]
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userId, setUserId] = useState<string | null>(null)
   const [userName, setUserName] = useState<string | null>(null)
   const [userRole, setUserRole] = useState<UserRole | null>(null)
+  const [userRoles, setUserRoles] = useState<UserRole[]>([])
   const [userEmail, setUserEmail] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   const setUser = (user: PublicUser | null) => {
     setUserId(user?.id || null)
     setUserName(user?.name || null)
-    setUserRole(user?.role || null)
+    setUserRoles(user?.roles?.length ? user.roles : user ? [user.role] : [])
+    setUserRole(user ? getInitialActiveRole(user) : null)
     setUserEmail(user?.email || null)
   }
 
@@ -62,12 +78,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await logoutAccount()
     } finally {
+      window.localStorage.removeItem(ACTIVE_ROLE_STORAGE_KEY)
       setUser(null)
     }
   }
 
+  const setActiveRole = (role: UserRole) => {
+    if (!userRoles.includes(role)) return
+    window.localStorage.setItem(ACTIVE_ROLE_STORAGE_KEY, role)
+    setUserRole(role)
+  }
+
   return (
-    <AuthContext.Provider value={{ userId, userName, userRole, userEmail, login, register, logout, isLoading }}>
+    <AuthContext.Provider
+      value={{ userId, userName, userRole, userRoles, userEmail, setActiveRole, login, register, logout, isLoading }}
+    >
       {children}
     </AuthContext.Provider>
   )

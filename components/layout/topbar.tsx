@@ -1,10 +1,17 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { Bell, LogOut, Search, Settings, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,6 +23,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/lib/auth-context'
 import { toast } from '@/hooks/use-toast'
+import { UserRole } from '@/lib/mock-data'
 
 interface TopBarProps {
   title: string
@@ -23,7 +31,7 @@ interface TopBarProps {
   userName: string
 }
 
-const roleLabels = {
+const roleLabels: Record<UserRole, string> = {
   device_owner: 'Device Owner',
   developer: 'Developer',
   admin: 'Administrator',
@@ -31,11 +39,24 @@ const roleLabels = {
 
 export function TopBar({ title, userRole, userName }: TopBarProps) {
   const router = useRouter()
-  const { logout } = useAuth()
+  const pathname = usePathname()
+  const { logout, userRoles, setActiveRole } = useAuth()
 
   const handleSignOut = async () => {
     await logout()
     router.push('/login')
+  }
+
+  const handleRoleChange = (role: UserRole) => {
+    if (role === userRole) return
+    setActiveRole(role)
+    toast({
+      title: `Switched to ${roleLabels[role]}`,
+      description: 'Your dashboard navigation has been updated for this mode.',
+    })
+    if (pathname !== '/dashboard') {
+      router.push('/dashboard')
+    }
   }
 
   return (
@@ -45,6 +66,21 @@ export function TopBar({ title, userRole, userName }: TopBarProps) {
       </div>
 
       <div className="flex items-center gap-4">
+        {userRoles.length > 1 && (
+          <Select value={userRole} onValueChange={(value) => handleRoleChange(value as UserRole)}>
+            <SelectTrigger className="hidden w-[170px] md:flex">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {userRoles.map((role) => (
+                <SelectItem key={role} value={role}>
+                  {roleLabels[role]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
         {/* Search */}
         <div className="relative hidden md:block">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -86,6 +122,18 @@ export function TopBar({ title, userRole, userName }: TopBarProps) {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel>My Account</DropdownMenuLabel>
+            {userRoles.length > 1 && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">Switch Mode</DropdownMenuLabel>
+                {userRoles.map((role) => (
+                  <DropdownMenuItem key={role} onClick={() => handleRoleChange(role)}>
+                    {roleLabels[role]}
+                    {role === userRole && <span className="ml-auto text-xs text-muted-foreground">Active</span>}
+                  </DropdownMenuItem>
+                ))}
+              </>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
               <Link href="/dashboard/settings">

@@ -93,6 +93,7 @@ export async function createStoredUser(input: {
     name: input.name.trim(),
     email: normalizeEmail(input.email),
     role: input.role,
+    roles: [input.role],
     passwordHash: hashPassword(input.password),
     createdAt: new Date().toISOString(),
     status: 'active',

@@ -61,9 +61,10 @@ import {
   getUsers,
   updateDeviceAction,
   updateUserAction,
+  updateUserRoles,
 } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
-import { PublicUser } from '@/lib/auth-types'
+import { PublicUser, hasUserRole, normalizeUserRoles } from '@/lib/auth-types'
 import { toast } from '@/hooks/use-toast'
 import { format, formatDistanceToNow } from 'date-fns'
 import { useRouter } from 'next/navigation'
@@ -215,9 +216,9 @@ export function AdminDashboard() {
   const activeGrants = accessGrants.filter((grant) => isGrantActive(grant, now))
   const expiringGrants = activeGrants.filter((grant) => new Date(grant.expiresAt).getTime() - now <= ONE_WEEK_MS)
 
-  const deviceOwnerCount = users.filter((user) => user.role === 'device_owner').length
-  const developerCount = users.filter((user) => user.role === 'developer').length
-  const adminCount = users.filter((user) => user.role === 'admin').length
+  const deviceOwnerCount = users.filter((user) => hasUserRole(user, 'device_owner')).length
+  const developerCount = users.filter((user) => hasUserRole(user, 'developer')).length
+  const adminCount = users.filter((user) => hasUserRole(user, 'admin')).length
   const suspendedUserCount = users.filter((user) => user.status === 'suspended').length
 
   const deviceOwnerOptions = useMemo(() => {
@@ -249,11 +250,18 @@ export function AdminDashboard() {
 
   const filteredUsers = users.filter((user) => {
     const search = userSearchQuery.trim().toLowerCase()
-    const searchable = [user.name, user.email, user.id, roleLabel(user.role), user.status].join(' ').toLowerCase()
+    const userRoles = normalizeUserRoles(user.role, user.roles)
+    const searchable = [
+      user.name,
+      user.email,
+      user.id,
+      userRoles.map(roleLabel).join(' '),
+      user.status,
+    ].join(' ').toLowerCase()
 
     return (
       (!search || searchable.includes(search)) &&
-      (userRoleFilter === 'all' || user.role === userRoleFilter) &&
+      (userRoleFilter === 'all' || hasUserRole(user, userRoleFilter as UserRole)) &&
       (userStatusFilter === 'all' || user.status === userStatusFilter)
     )
   })
@@ -333,6 +341,38 @@ export function AdminDashboard() {
       console.error('Failed to update user', error)
       toast({
         title: 'Failed to update user',
+        description: error instanceof Error ? error.message : 'Please try again.',
+        variant: 'destructive',
+      })
+    } finally {
+      setUserActionLoading(null)
+    }
+  }
+
+  const handleUserRolesChange = async (targetUser: PublicUser, nextRoles: UserRole[]) => {
+    if (nextRoles.length === 0) {
+      toast({
+        title: 'At least one role is required',
+        description: 'Users need one active platform role.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setUserActionLoading(`roles:${targetUser.id}`)
+    try {
+      const updatedUser = await updateUserRoles(targetUser.id, nextRoles)
+      setUsers((current) => current.map((user) => (user.id === updatedUser.id ? updatedUser : user)))
+      if (selectedUser?.id === updatedUser.id) setSelectedUser(updatedUser)
+      setRefreshKey((prev) => prev + 1)
+      toast({
+        title: 'User roles updated',
+        description: `${targetUser.name} now has ${updatedUser.roles.map(roleLabel).join(', ')} access.`,
+      })
+    } catch (error) {
+      console.error('Failed to update user roles', error)
+      toast({
+        title: 'Failed to update roles',
         description: error instanceof Error ? error.message : 'Please try again.',
         variant: 'destructive',
       })
@@ -703,6 +743,7 @@ export function AdminDashboard() {
                 {filteredUsers.length > 0 ? (
                   filteredUsers.map((user) => {
                     const isBusy = userActionLoading?.endsWith(`:${user.id}`)
+                    const userRoles = normalizeUserRoles(user.role, user.roles)
                     return (
                       <TableRow key={user.id}>
                         <TableCell>
@@ -712,9 +753,13 @@ export function AdminDashboard() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="secondary" className="text-xs capitalize">
-                            {roleLabel(user.role)}
-                          </Badge>
+                          <div className="flex flex-wrap gap-1">
+                            {userRoles.map((role) => (
+                              <Badge key={role} variant="secondary" className="text-xs capitalize">
+                                {roleLabel(role)}
+                              </Badge>
+                            ))}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <UserStatusBadge status={user.status} />
@@ -885,10 +930,14 @@ export function AdminDashboard() {
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Role</p>
-                  <Badge variant="secondary" className="mt-1 capitalize">
-                    {roleLabel(selectedUser.role)}
-                  </Badge>
+                  <p className="text-sm font-medium text-muted-foreground">Roles</p>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {normalizeUserRoles(selectedUser.role, selectedUser.roles).map((role) => (
+                      <Badge key={role} variant="secondary" className="capitalize">
+                        {roleLabel(role)}
+                      </Badge>
+                    ))}
+                  </div>
                 </div>
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Status</p>
@@ -905,6 +954,35 @@ export function AdminDashboard() {
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Owned Devices</p>
                   <p className="text-sm text-foreground">{getOwnedDeviceCount(selectedUser.id)}</p>
+                </div>
+              </div>
+              <div className="border-t border-border pt-4">
+                <p className="text-sm font-medium text-muted-foreground">Role Management</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  {roleOptions.map((role) => {
+                    const currentRoles = normalizeUserRoles(selectedUser.role, selectedUser.roles)
+                    const isEnabled = currentRoles.includes(role)
+                    const nextRoles = isEnabled
+                      ? currentRoles.filter((currentRole) => currentRole !== role)
+                      : [...currentRoles, role]
+                    const isBusy = userActionLoading?.endsWith(`:${selectedUser.id}`)
+                    const cannotRemove =
+                      isEnabled &&
+                      (currentRoles.length === 1 || (selectedUser.id === userId && role === 'admin'))
+
+                    return (
+                      <Button
+                        key={role}
+                        type="button"
+                        variant={isEnabled ? 'default' : 'outline'}
+                        disabled={Boolean(isBusy) || cannotRemove}
+                        onClick={() => handleUserRolesChange(selectedUser, nextRoles)}
+                        className="justify-start capitalize"
+                      >
+                        {isEnabled ? 'Remove' : 'Add'} {roleLabel(role)}
+                      </Button>
+                    )
+                  })}
                 </div>
               </div>
               <div className="flex justify-end gap-2 border-t border-border pt-4">

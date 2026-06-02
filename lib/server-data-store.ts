@@ -13,7 +13,7 @@ import {
   telemetryRecords as initialTelemetryRecords,
   auditLogs as initialAuditLogs,
 } from './mock-data'
-import { AuthSession, StoredUser } from './auth-types'
+import { AuthSession, StoredUser, normalizeStoredUser } from './auth-types'
 import { createInitialDemoUsers, shouldSeedDemoUsers } from './demo-users'
 import { isPostgresConfigured, PostgresDataStore } from './postgres-data-store'
 
@@ -205,17 +205,18 @@ export class ServerDataStore {
   static async getAllUsers(): Promise<StoredUser[]> {
     if (isPostgresConfigured()) return PostgresDataStore.getAllUsers()
     const users = await this.getUsersFile()
-    if (!shouldSeedDemoUsers()) return users
+    const normalizedUsers = users.map(normalizeStoredUser)
+    if (!shouldSeedDemoUsers()) return normalizedUsers
 
-    const existingIds = new Set(users.map(user => user.id))
-    const existingEmails = new Set(users.map(user => user.email.toLowerCase()))
+    const existingIds = new Set(normalizedUsers.map(user => user.id))
+    const existingEmails = new Set(normalizedUsers.map(user => user.email.toLowerCase()))
     const missingSeedUsers = createInitialDemoUsers().filter(
       user => !existingIds.has(user.id) && !existingEmails.has(user.email.toLowerCase())
     )
 
-    if (missingSeedUsers.length === 0) return users
+    if (missingSeedUsers.length === 0) return normalizedUsers
 
-    const mergedUsers = [...users, ...missingSeedUsers]
+    const mergedUsers = [...normalizedUsers, ...missingSeedUsers.map(normalizeStoredUser)]
     await this.writeUsers(mergedUsers)
     return mergedUsers
   }
@@ -235,10 +236,11 @@ export class ServerDataStore {
 
   static async addUser(user: StoredUser): Promise<StoredUser> {
     if (isPostgresConfigured()) return PostgresDataStore.addUser(user)
+    const normalizedUser = normalizeStoredUser(user)
     const users = await this.getAllUsers()
-    users.push(user)
+    users.push(normalizedUser)
     await this.writeUsers(users)
-    return user
+    return normalizedUser
   }
 
   static async updateUser(id: string, updates: Partial<StoredUser>): Promise<StoredUser | null> {
@@ -246,7 +248,7 @@ export class ServerDataStore {
     const users = await this.getAllUsers()
     const index = users.findIndex(user => user.id === id)
     if (index < 0) return null
-    users[index] = { ...users[index], ...updates }
+    users[index] = normalizeStoredUser({ ...users[index], ...updates })
     await this.writeUsers(users)
     return users[index]
   }

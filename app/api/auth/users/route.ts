@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireCurrentUser } from '@/lib/auth-server'
 import { ServerDataStore } from '@/lib/server-data-store'
-import { toPublicUser } from '@/lib/auth-types'
+import { hasUserRole, toPublicUser } from '@/lib/auth-types'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   const currentUser = await requireCurrentUser(request)
   if (currentUser instanceof NextResponse) return currentUser
 
-  if (currentUser.role !== 'admin') {
+  if (!hasUserRole(currentUser, 'admin')) {
     return NextResponse.json({ error: 'Admin access required.' }, { status: 403 })
   }
 

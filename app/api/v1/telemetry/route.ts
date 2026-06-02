@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { ServerDataStore } from '@/lib/server-data-store'
 import { requireCurrentUser } from '@/lib/auth-server'
 import { canReadTelemetry } from '@/lib/access-control'
+import { hasUserRole } from '@/lib/auth-types'
 
 export async function GET(request: Request) {
   const currentUser = await requireCurrentUser(request)
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Invalid date range' }, { status: 400 })
   }
 
-  if (!deviceId && currentUser.role !== 'admin') {
+  if (!deviceId && !hasUserRole(currentUser, 'admin')) {
     return NextResponse.json({ error: 'deviceId is required unless you are an admin.' }, { status: 403 })
   }
 

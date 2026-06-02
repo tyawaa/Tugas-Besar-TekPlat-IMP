@@ -26,7 +26,6 @@ export default function ApiDocsPage() {
     <DashboardLayout 
       title="Developer API" 
       subtitle="Use approved device telemetry in your own applications." 
-      userRole="developer"
     >
       {/* Info Alert */}
       <Alert className="border-blue-200 bg-blue-50">

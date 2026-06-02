@@ -23,6 +23,7 @@ export function createInitialDemoUsers(): StoredUser[] {
     name: user.name,
     email: user.email.toLowerCase(),
     role: user.role,
+    roles: [user.role],
     passwordHash: createDemoPasswordHash(user.email),
     createdAt: new Date(user.createdAt).toISOString(),
     status: user.status,

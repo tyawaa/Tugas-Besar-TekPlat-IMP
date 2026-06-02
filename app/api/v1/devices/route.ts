@@ -2,24 +2,33 @@ import { NextResponse } from 'next/server'
 import { ServerDataStore } from '@/lib/server-data-store'
 import { requireCurrentUser } from '@/lib/auth-server'
 import { filterDevicesForUser, isGrantActive } from '@/lib/access-control'
+import { hasUserRole } from '@/lib/auth-types'
 
 export async function GET(request: Request) {
   const currentUser = await requireCurrentUser(request)
   if (currentUser instanceof NextResponse) return currentUser
 
   const devices = await ServerDataStore.getAllDevices()
-  if (currentUser.role === 'developer') {
+  if (hasUserRole(currentUser, 'admin')) {
+    return NextResponse.json(devices)
+  }
+
+  if (hasUserRole(currentUser, 'developer')) {
     const grants = await ServerDataStore.getAllAccessGrants()
     const grantedDeviceIds = new Set(
       grants
         .filter(grant => grant.developerId === currentUser.id && isGrantActive(grant))
         .map(grant => grant.deviceId)
     )
-    return NextResponse.json(
-      devices.filter(device =>
+    const visibleDevices = new Map(
+      filterDevicesForUser(currentUser, devices).map(device => [device.id, device])
+    )
+    devices
+      .filter(device =>
         (device.visibility === 'catalog' && device.status !== 'archived') || grantedDeviceIds.has(device.id)
       )
-    )
+      .forEach(device => visibleDevices.set(device.id, device))
+    return NextResponse.json(Array.from(visibleDevices.values()))
   }
 
   return NextResponse.json(filterDevicesForUser(currentUser, devices))
@@ -29,7 +38,7 @@ export async function POST(request: Request) {
   const currentUser = await requireCurrentUser(request)
   if (currentUser instanceof NextResponse) return currentUser
 
-  if (currentUser.role !== 'device_owner' && currentUser.role !== 'admin') {
+  if (!hasUserRole(currentUser, 'device_owner') && !hasUserRole(currentUser, 'admin')) {
     return NextResponse.json({ error: 'Only device owners can register devices.' }, { status: 403 })
   }
 

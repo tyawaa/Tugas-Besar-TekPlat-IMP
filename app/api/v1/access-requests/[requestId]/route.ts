@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { ServerDataStore } from '@/lib/server-data-store'
 import { requireCurrentUser } from '@/lib/auth-server'
 import { canManageDevice } from '@/lib/access-control'
+import { hasUserRole } from '@/lib/auth-types'
 
 export async function GET(
   request: Request,
@@ -18,7 +19,7 @@ export async function GET(
 
   const device = await ServerDataStore.getDeviceById(requestItem.deviceId)
   const canView =
-    currentUser.role === 'admin' ||
+    hasUserRole(currentUser, 'admin') ||
     requestItem.developerId === currentUser.id ||
     (device ? canManageDevice(currentUser, device) : false)
   if (!canView) {
@@ -52,7 +53,7 @@ export async function POST(
   }
 
   if (action === 'cancel') {
-    if (currentUser.role !== 'developer' || requestItem.developerId !== currentUser.id) {
+    if (!hasUserRole(currentUser, 'developer') || requestItem.developerId !== currentUser.id) {
       return NextResponse.json({ error: 'Only the requesting developer can cancel this request.' }, { status: 403 })
     }
 
