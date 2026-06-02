@@ -3,8 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
-import { IoTBridgeDataStore } from '@/lib/data-store'
-import { IoTBridgeActions } from '@/lib/actions'
+import { registerDevice } from '@/lib/api'
 import { DashboardLayout } from '@/components/layout/dashboard-layout'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -91,30 +90,34 @@ export default function PairDevicePage() {
     setMetrics(presetMetrics)
   }
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!userId || !deviceName || !deviceType || !location) return
 
-    const newDevice = IoTBridgeActions.registerDevice({
-      name: deviceName,
-      type: deviceType,
-      location,
-      description,
-      ownerId: userId,
-      status: 'online',
-      visibility,
-      lastSeen: new Date().toISOString(),
-      heartbeatInterval: parseInt(heartbeatInterval),
-      metrics: metrics.map(m => ({
-        key: m.key,
-        label: m.label,
-        valueType: m.valueType,
-        unit: m.unit,
-      })),
-    })
+    try {
+      const newDevice = await registerDevice({
+        name: deviceName,
+        type: deviceType,
+        location,
+        description,
+        ownerId: userId,
+        status: 'online',
+        visibility,
+        lastSeen: new Date().toISOString(),
+        heartbeatInterval: parseInt(heartbeatInterval),
+        metrics: metrics.map(m => ({
+          key: m.key,
+          label: m.label,
+          valueType: m.valueType,
+          unit: m.unit,
+        })),
+      })
 
-    setNewDeviceId(newDevice.id)
-    setNewDeviceKey(newDevice.apiKey)
-    setIsSubmitted(true)
+      setNewDeviceId(newDevice.id)
+      setNewDeviceKey(newDevice.apiKey)
+      setIsSubmitted(true)
+    } catch (error) {
+      console.error('Failed to register device', error)
+    }
   }
 
   const copyToClipboard = (text: string) => {

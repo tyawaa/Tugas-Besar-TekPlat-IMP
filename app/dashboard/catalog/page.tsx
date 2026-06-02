@@ -31,11 +31,10 @@ import {
   CheckCircle,
 } from 'lucide-react'
 import { Device, deviceHealth } from '@/lib/mock-data'
-import { IoTBridgeDataStore } from '@/lib/data-store'
-import { IoTBridgeActions } from '@/lib/actions'
 import { useAuth } from '@/lib/auth-context'
 import { formatDistanceToNow } from 'date-fns'
 import { HealthBadge } from '@/components/devices/health-badge'
+import { createAccessRequest, getDevices } from '@/lib/api'
 
 export default function CatalogPage() {
   const { userId, userName, userEmail } = useAuth()
@@ -49,15 +48,18 @@ export default function CatalogPage() {
   const [purpose, setPurpose] = useState('')
   const [requestedUntil, setRequestedUntil] = useState('')
 
-  // Load catalog devices from data store
+  // Load catalog devices from API
   useEffect(() => {
-    const loadCatalogDevices = () => {
-      const allDevices = IoTBridgeDataStore.getAllDevices()
-      // Filter for catalog visibility and not archived
-      const filtered = allDevices.filter(
-        d => d.visibility === 'catalog' && d.status !== 'archived'
-      )
-      setCatalogDevices(filtered)
+    const loadCatalogDevices = async () => {
+      try {
+        const allDevices = await getDevices()
+        const filtered = allDevices.filter(
+          d => d.visibility === 'catalog' && d.status !== 'archived'
+        )
+        setCatalogDevices(filtered)
+      } catch (error) {
+        console.error('Failed to load catalog devices', error)
+      }
     }
     loadCatalogDevices()
   }, [])
@@ -79,21 +81,24 @@ export default function CatalogPage() {
     setRequestedUntil('')
   }
 
-  const handleSubmitRequest = () => {
+  const handleSubmitRequest = async () => {
     if (!selectedDevice || !userId || !userName || !userEmail) return
-    
-    // Create access request using IoTBridgeActions
-    IoTBridgeActions.createAccessRequest(
-      selectedDevice.id,
-      userId,
-      userName,
-      userEmail,
-      purpose || 'Access to device telemetry data',
-      ['telemetry:read'],
-      requestedUntil || new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    )
-    
-    setRequestSubmitted(true)
+
+    try {
+      await createAccessRequest({
+        deviceId: selectedDevice.id,
+        developerId: userId,
+        developerName: userName,
+        developerEmail: userEmail,
+        purpose: purpose || 'Access to device telemetry data',
+        scopes: ['telemetry:read'],
+        requestedUntil:
+          requestedUntil || new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      })
+      setRequestSubmitted(true)
+    } catch (error) {
+      console.error('Failed to submit access request', error)
+    }
   }
 
   const getDeviceHealth = (deviceId: string) => {

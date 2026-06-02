@@ -1,0 +1,60 @@
+[
+  {
+    "id": "ar-001",
+    "deviceId": "dev-001",
+    "developerId": "u2",
+    "developerName": "Siti Rahayu",
+    "developerEmail": "siti.rahayu@campus.edu",
+    "purpose": "Research project on campus microclimate analysis for sustainability study.",
+    "scopes": [
+      "telemetry:read"
+    ],
+    "requestedUntil": "2024-06-30",
+    "status": "rejected",
+    "createdAt": "2024-03-10"
+  },
+  {
+    "id": "ar-002",
+    "deviceId": "dev-002",
+    "developerId": "u3",
+    "developerName": "Budi Santoso",
+    "developerEmail": "budi.santoso@campus.edu",
+    "purpose": "Building smart study room recommendation app for students.",
+    "scopes": [
+      "telemetry:read",
+      "telemetry:history"
+    ],
+    "requestedUntil": "2024-05-15",
+    "status": "revoked",
+    "createdAt": "2024-03-05"
+  },
+  {
+    "id": "ar-003",
+    "deviceId": "dev-003",
+    "developerId": "u2",
+    "developerName": "Siti Rahayu",
+    "developerEmail": "siti.rahayu@campus.edu",
+    "purpose": "Campus space utilization analysis dashboard.",
+    "scopes": [
+      "telemetry:read"
+    ],
+    "requestedUntil": "2024-07-31",
+    "status": "pending",
+    "createdAt": "2024-03-12"
+  },
+  {
+    "id": "ar-004",
+    "deviceId": "dev-004",
+    "developerId": "u3",
+    "developerName": "Budi Santoso",
+    "developerEmail": "budi.santoso@campus.edu",
+    "purpose": "Air quality monitoring mobile app for campus health initiative.",
+    "scopes": [
+      "telemetry:read",
+      "telemetry:history"
+    ],
+    "requestedUntil": "2024-08-31",
+    "status": "rejected",
+    "createdAt": "2024-03-01"
+  }
+]

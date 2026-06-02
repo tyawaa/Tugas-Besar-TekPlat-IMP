@@ -27,8 +27,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Device, AuditLog, users } from '@/lib/mock-data'
-import { IoTBridgeDataStore } from '@/lib/data-store'
-import { IoTBridgeActions } from '@/lib/actions'
+import { getDevices, getAuditLogs, updateDeviceAction } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { toast } from '@/hooks/use-toast'
 import { format } from 'date-fns'
@@ -41,14 +40,17 @@ export function AdminDashboard() {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
 
-  // Load data from data store
+  // Load data from API
   useEffect(() => {
-    const loadData = () => {
-      setDevices(IoTBridgeDataStore.getAllDevices())
-      const logs = IoTBridgeDataStore.getAllAuditLogs()
-      // Sort by timestamp descending and take last 10
-      logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      setAuditLogs(logs.slice(0, 10))
+    const loadData = async () => {
+      try {
+        const [devices, logs] = await Promise.all([getDevices(), getAuditLogs()])
+        setDevices(devices)
+        logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        setAuditLogs(logs.slice(0, 10))
+      } catch (error) {
+        console.error('Failed to load admin dashboard data', error)
+      }
     }
     loadData()
   }, [refreshKey])
@@ -60,16 +62,24 @@ export function AdminDashboard() {
     suspendedDevices: devices.filter(d => d.status === 'suspended').length,
   }
 
-  const handleSuspendDevice = (deviceId: string) => {
+  const handleSuspendDevice = async (deviceId: string) => {
     if (!userId || !userName || !userRole) return
-    IoTBridgeActions.suspendDevice(deviceId, userId, userName, userRole)
-    setRefreshKey(prev => prev + 1)
+    try {
+      await updateDeviceAction(deviceId, 'suspend', userId, userName, userRole)
+      setRefreshKey((prev) => prev + 1)
+    } catch (error) {
+      console.error('Failed to suspend device', error)
+    }
   }
 
-  const handleReinstateDevice = (deviceId: string) => {
+  const handleReinstateDevice = async (deviceId: string) => {
     if (!userId || !userName || !userRole) return
-    IoTBridgeActions.reinstateDevice(deviceId, userId, userName, userRole)
-    setRefreshKey(prev => prev + 1)
+    try {
+      await updateDeviceAction(deviceId, 'reinstate', userId, userName, userRole)
+      setRefreshKey((prev) => prev + 1)
+    } catch (error) {
+      console.error('Failed to reinstate device', error)
+    }
   }
 
   const showUserManagementNotice = () => {

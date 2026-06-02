@@ -27,7 +27,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { AuditLog } from '@/lib/mock-data'
-import { IoTBridgeDataStore } from '@/lib/data-store'
+import { getAuditLogs } from '@/lib/api'
 import { format } from 'date-fns'
 import { ChevronRight, FileText, CheckCircle, AlertCircle, Shield } from 'lucide-react'
 
@@ -40,12 +40,18 @@ export function AuditLogsContent() {
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
-  // Load audit logs from data store
+  // Load audit logs from API
   useEffect(() => {
-    const logs = IoTBridgeDataStore.getAllAuditLogs()
-    // Sort by timestamp descending (newest first)
-    logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-    setAuditLogs(logs)
+    const loadLogs = async () => {
+      try {
+        const logs = await getAuditLogs()
+        logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        setAuditLogs(logs)
+      } catch (error) {
+        console.error('Failed to load audit logs', error)
+      }
+    }
+    loadLogs()
   }, [refreshKey])
 
   // Periodically refresh to catch new logs

@@ -1,0 +1,136 @@
+[
+  {
+    "id": "al-001",
+    "timestamp": "2024-03-15T14:30:00Z",
+    "actorId": "u1",
+    "actorName": "Ahmad Fauzi",
+    "actorRole": "device_owner",
+    "action": "device.telemetry.received",
+    "targetType": "device",
+    "targetId": "dev-001",
+    "outcome": "success"
+  },
+  {
+    "id": "al-002",
+    "timestamp": "2024-03-15T14:25:00Z",
+    "actorId": "u2",
+    "actorName": "Siti Rahayu",
+    "actorRole": "developer",
+    "action": "access.request.created",
+    "targetType": "access_request",
+    "targetId": "ar-003",
+    "outcome": "success"
+  },
+  {
+    "id": "al-003",
+    "timestamp": "2024-03-15T12:00:00Z",
+    "actorId": "u5",
+    "actorName": "Admin Campus",
+    "actorRole": "admin",
+    "action": "device.suspended",
+    "targetType": "device",
+    "targetId": "dev-005",
+    "outcome": "success",
+    "details": "Maintenance required"
+  },
+  {
+    "id": "al-004",
+    "timestamp": "2024-03-14T16:45:00Z",
+    "actorId": "u4",
+    "actorName": "Dewi Lestari",
+    "actorRole": "device_owner",
+    "action": "access.request.rejected",
+    "targetType": "access_request",
+    "targetId": "ar-004",
+    "outcome": "success"
+  },
+  {
+    "id": "al-005",
+    "timestamp": "2024-03-14T10:30:00Z",
+    "actorId": "u1",
+    "actorName": "Ahmad Fauzi",
+    "actorRole": "device_owner",
+    "action": "access.request.approved",
+    "targetType": "access_request",
+    "targetId": "ar-002",
+    "outcome": "success"
+  },
+  {
+    "id": "al-006",
+    "timestamp": "2024-03-13T09:00:00Z",
+    "actorId": "u5",
+    "actorName": "Admin Campus",
+    "actorRole": "admin",
+    "action": "user.suspended",
+    "targetType": "user",
+    "targetId": "u6",
+    "outcome": "success",
+    "details": "Policy violation"
+  },
+  {
+    "id": "al-007",
+    "timestamp": "2024-03-12T14:20:00Z",
+    "actorId": "u4",
+    "actorName": "Dewi Lestari",
+    "actorRole": "device_owner",
+    "action": "device.registered",
+    "targetType": "device",
+    "targetId": "dev-006",
+    "outcome": "success"
+  },
+  {
+    "id": "al-008",
+    "timestamp": "2024-03-11T11:15:00Z",
+    "actorId": "u3",
+    "actorName": "Budi Santoso",
+    "actorRole": "developer",
+    "action": "api.data.accessed",
+    "targetType": "device",
+    "targetId": "dev-002",
+    "outcome": "success"
+  },
+  {
+    "id": "log_gpgq31mi_1780359873755",
+    "timestamp": "2026-06-02T00:24:33.755Z",
+    "actorId": "u1",
+    "actorName": "Ahmad Fauzi",
+    "actorRole": "device_owner",
+    "action": "access.rejected",
+    "targetType": "access_request",
+    "targetId": "ar-001",
+    "outcome": "success"
+  },
+  {
+    "id": "log_sda0ryob_1780359874639",
+    "timestamp": "2026-06-02T00:24:34.639Z",
+    "actorId": "u1",
+    "actorName": "Ahmad Fauzi",
+    "actorRole": "device_owner",
+    "action": "access.revoked",
+    "targetType": "access_grant",
+    "targetId": "ag-001",
+    "outcome": "success"
+  },
+  {
+    "id": "log_gmqqo18x_1780359915442",
+    "timestamp": "2026-06-02T00:25:15.442Z",
+    "actorId": "system",
+    "actorName": "Device Registration",
+    "actorRole": "device_owner",
+    "action": "device.registered",
+    "targetType": "device",
+    "targetId": "dev_1780359915440_j9iiakuq",
+    "outcome": "success"
+  },
+  {
+    "id": "log_ytnpfpfb_1780359999935",
+    "timestamp": "2026-06-02T00:26:39.935Z",
+    "actorId": "system",
+    "actorName": "Device Registration",
+    "actorRole": "device_owner",
+    "action": "device.registered",
+    "targetType": "device",
+    "targetId": "dev_1780359999933_boskg442",
+    "outcome": "success"
+  }
+]

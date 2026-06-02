@@ -42,8 +42,7 @@ import {
   ArrowLeft,
 } from 'lucide-react'
 import { Device, AccessRequest, AccessGrant, TelemetryRecord, deviceHealth } from '@/lib/mock-data'
-import { IoTBridgeDataStore } from '@/lib/data-store'
-import { IoTBridgeActions } from '@/lib/actions'
+import { getDevice, getAccessRequests, getAccessGrants, getTelemetryHistory, ingestTelemetry, updateDeviceAction, actionAccessRequest, revokeAccessGrant } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { toast } from '@/hooks/use-toast'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -65,14 +64,21 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
 
   // Load device data
   useEffect(() => {
-    const loadData = () => {
-      const deviceData = IoTBridgeDataStore.getDeviceById(deviceId)
-      setDevice(deviceData)
-      
-      if (deviceData) {
-        setAccessRequests(IoTBridgeDataStore.getAccessRequestsByDevice(deviceId))
-        setAccessGrants(IoTBridgeDataStore.getAllAccessGrants().filter(g => g.deviceId === deviceId))
-        setTelemetryData(IoTBridgeDataStore.getTelemetryByDevice(deviceId))
+    const loadData = async () => {
+      try {
+        const [deviceData, allRequests, allGrants, telemetryHistory] = await Promise.all([
+          getDevice(deviceId),
+          getAccessRequests(),
+          getAccessGrants(),
+          getTelemetryHistory(deviceId),
+        ])
+
+        setDevice(deviceData)
+        setAccessRequests(allRequests.filter((request) => request.deviceId === deviceId))
+        setAccessGrants(allGrants.filter((grant) => grant.deviceId === deviceId))
+        setTelemetryData(telemetryHistory)
+      } catch (error) {
+        console.error('Failed to load device details', error)
       }
     }
     loadData()
@@ -149,72 +155,85 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
 
   const handleStartSimulator = () => {
     if (!device || !userId || !userName || !userRole) return
-    
+
     setSimulatorRunning(true)
-    
-    // Log simulator started
-    IoTBridgeDataStore.logAction(userId, userName, userRole, 'simulator.started', 'device', deviceId)
-    
-    // Generate telemetry every 3 seconds
-    simulatorRef.current = setInterval(() => {
-      const telemetryData = generateRandomTelemetry(device.metrics)
-      IoTBridgeActions.addTelemetry(deviceId, telemetryData)
-      setRefreshKey(prev => prev + 1)
+
+    simulatorRef.current = setInterval(async () => {
+      const telemetryPayload = generateRandomTelemetry(device.metrics)
+      try {
+        await ingestTelemetry(deviceId, telemetryPayload)
+        setRefreshKey((prev) => prev + 1)
+      } catch (error) {
+        console.error('Failed to ingest telemetry', error)
+      }
     }, 3000)
   }
 
   const handleStopSimulator = () => {
     if (!userId || !userName || !userRole) return
-    
+
     if (simulatorRef.current) {
       clearInterval(simulatorRef.current)
       simulatorRef.current = null
     }
     setSimulatorRunning(false)
-    
-    // Log simulator stopped
-    IoTBridgeDataStore.logAction(userId, userName, userRole, 'simulator.stopped', 'device', deviceId)
   }
 
-  const handleInjectAnomaly = () => {
+  const handleInjectAnomaly = async () => {
     if (!device || !userId || !userName || !userRole) return
-    
+
     const anomalyData = generateRandomTelemetry(device.metrics, true)
-    IoTBridgeActions.addTelemetry(deviceId, anomalyData)
-    
-    // Log anomaly injection
-    IoTBridgeDataStore.logAction(userId, userName, userRole, 'simulator.anomaly_injected', 'device', deviceId)
-    
-    setRefreshKey(prev => prev + 1)
+    try {
+      await ingestTelemetry(deviceId, anomalyData)
+      setRefreshKey((prev) => prev + 1)
+    } catch (error) {
+      console.error('Failed to ingest anomaly telemetry', error)
+    }
   }
 
-  const handleApproveRequest = (requestId: string) => {
+  const handleApproveRequest = async (requestId: string) => {
     if (!userId || !userName || !userRole) return
-    IoTBridgeActions.approveAccessRequest(requestId, userId, userName, userRole)
-    setRefreshKey(prev => prev + 1)
+    try {
+      await actionAccessRequest(requestId, 'approve', userId, userName, userRole)
+      setRefreshKey((prev) => prev + 1)
+    } catch (error) {
+      console.error('Failed to approve request', error)
+    }
   }
 
-  const handleRejectRequest = (requestId: string) => {
+  const handleRejectRequest = async (requestId: string) => {
     if (!userId || !userName || !userRole) return
-    IoTBridgeActions.rejectAccessRequest(requestId, userId, userName, userRole)
-    setRefreshKey(prev => prev + 1)
+    try {
+      await actionAccessRequest(requestId, 'reject', userId, userName, userRole)
+      setRefreshKey((prev) => prev + 1)
+    } catch (error) {
+      console.error('Failed to reject request', error)
+    }
   }
 
-  const handleRevokeGrant = (grantId: string) => {
+  const handleRevokeGrant = async (grantId: string) => {
     if (!userId || !userName || !userRole) return
-    IoTBridgeActions.revokeAccessGrant(grantId, userId, userName, userRole)
-    setRefreshKey(prev => prev + 1)
+    try {
+      await revokeAccessGrant(grantId, userId, userName, userRole)
+      setRefreshKey((prev) => prev + 1)
+    } catch (error) {
+      console.error('Failed to revoke grant', error)
+    }
   }
 
-  const handleRotateApiKey = () => {
+  const handleRotateApiKey = async () => {
     if (!userId || !userName || !userRole) return
-    IoTBridgeActions.rotateDeviceApiKey(deviceId, userId, userName, userRole)
-    setShowApiKey(true)
-    setRefreshKey(prev => prev + 1)
-    toast({
-      title: 'API key rotated',
-      description: 'The new device key is now shown in the credentials panel.',
-    })
+    try {
+      await updateDeviceAction(deviceId, 'rotateKey', userId, userName, userRole)
+      setShowApiKey(true)
+      setRefreshKey((prev) => prev + 1)
+      toast({
+        title: 'API key rotated',
+        description: 'The new device key is now shown in the credentials panel.',
+      })
+    } catch (error) {
+      console.error('Failed to rotate API key', error)
+    }
   }
 
   const showEditDeviceNotice = () => {

@@ -22,8 +22,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Device, deviceHealth, users } from '@/lib/mock-data'
-import { IoTBridgeDataStore } from '@/lib/data-store'
-import { IoTBridgeActions } from '@/lib/actions'
+import { getDevices, updateDeviceAction } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { formatDistanceToNow } from 'date-fns'
 import { Search, Plus, Eye, Cpu, Wifi, WifiOff, AlertTriangle } from 'lucide-react'
@@ -39,15 +38,18 @@ export function DevicesContent() {
   const [devices, setDevices] = useState<Device[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
 
-  // Load devices from data store
+  // Load devices from API
   useEffect(() => {
-    const loadDevices = () => {
-      if (isAdmin) {
-        // Admin sees all devices
-        setDevices(IoTBridgeDataStore.getAllDevices())
-      } else if (userId) {
-        // Device owner sees only their devices
-        setDevices(IoTBridgeDataStore.getDevicesByOwner(userId))
+    const loadDevices = async () => {
+      try {
+        const allDevices = await getDevices()
+        if (isAdmin) {
+          setDevices(allDevices)
+        } else if (userId) {
+          setDevices(allDevices.filter((device) => device.ownerId === userId))
+        }
+      } catch (error) {
+        console.error('Failed to load devices', error)
       }
     }
     loadDevices()
@@ -67,16 +69,24 @@ export function DevicesContent() {
   const offlineCount = devices.filter(d => d.status === 'offline').length
   const suspendedCount = devices.filter(d => d.status === 'suspended').length
 
-  const handleSuspend = (deviceId: string) => {
+  const handleSuspend = async (deviceId: string) => {
     if (!userId || !userName || !userRole) return
-    IoTBridgeActions.suspendDevice(deviceId, userId, userName, userRole)
-    setRefreshKey(prev => prev + 1)
+    try {
+      await updateDeviceAction(deviceId, 'suspend', userId, userName, userRole)
+      setRefreshKey(prev => prev + 1)
+    } catch (error) {
+      console.error('Failed to suspend device', error)
+    }
   }
 
-  const handleReinstate = (deviceId: string) => {
+  const handleReinstate = async (deviceId: string) => {
     if (!userId || !userName || !userRole) return
-    IoTBridgeActions.reinstateDevice(deviceId, userId, userName, userRole)
-    setRefreshKey(prev => prev + 1)
+    try {
+      await updateDeviceAction(deviceId, 'reinstate', userId, userName, userRole)
+      setRefreshKey(prev => prev + 1)
+    } catch (error) {
+      console.error('Failed to reinstate device', error)
+    }
   }
 
   const getDeviceHealth = (deviceId: string) => {

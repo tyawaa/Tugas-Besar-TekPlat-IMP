@@ -1,0 +1,238 @@
+[
+  {
+    "id": "dev-001",
+    "name": "Weather Station Labtek VIII",
+    "type": "Weather Station",
+    "location": "Labtek VIII Rooftop",
+    "description": "Multi-sensor weather monitoring station with temperature, humidity, and pressure sensors.",
+    "ownerId": "u1",
+    "status": "online",
+    "visibility": "catalog",
+    "lastSeen": "2024-03-15T14:32:00Z",
+    "heartbeatInterval": 60,
+    "metrics": [
+      {
+        "key": "temperature",
+        "label": "Temperature",
+        "valueType": "number",
+        "unit": "°C"
+      },
+      {
+        "key": "humidity",
+        "label": "Humidity",
+        "valueType": "number",
+        "unit": "%"
+      },
+      {
+        "key": "pressure",
+        "label": "Pressure",
+        "valueType": "number",
+        "unit": "hPa"
+      }
+    ],
+    "apiKey": "iot_key_abc123xyz789",
+    "createdAt": "2024-01-20"
+  },
+  {
+    "id": "dev-002",
+    "name": "Noise Sensor Library",
+    "type": "Noise Sensor",
+    "location": "Main Library Floor 2",
+    "description": "Ambient noise level monitoring for quiet study zones.",
+    "ownerId": "u1",
+    "status": "online",
+    "visibility": "catalog",
+    "lastSeen": "2024-03-15T14:30:00Z",
+    "heartbeatInterval": 30,
+    "metrics": [
+      {
+        "key": "noise_level",
+        "label": "Noise Level",
+        "valueType": "number",
+        "unit": "dB"
+      },
+      {
+        "key": "peak_noise",
+        "label": "Peak Noise",
+        "valueType": "number",
+        "unit": "dB"
+      }
+    ],
+    "apiKey": "iot_key_def456uvw012",
+    "createdAt": "2024-02-05"
+  },
+  {
+    "id": "dev-003",
+    "name": "Occupancy Counter Classroom 7602",
+    "type": "Occupancy Sensor",
+    "location": "Building 7 Room 602",
+    "description": "Real-time occupancy counting using IR beam sensors.",
+    "ownerId": "u4",
+    "status": "online",
+    "visibility": "catalog",
+    "lastSeen": "2024-03-15T14:31:00Z",
+    "heartbeatInterval": 15,
+    "metrics": [
+      {
+        "key": "occupancy",
+        "label": "Current Occupancy",
+        "valueType": "number",
+        "unit": "people"
+      },
+      {
+        "key": "capacity",
+        "label": "Room Capacity",
+        "valueType": "number",
+        "unit": "people"
+      }
+    ],
+    "apiKey": "iot_key_ghi789rst345",
+    "createdAt": "2024-02-10"
+  },
+  {
+    "id": "dev-004",
+    "name": "Air Quality Sensor Lab",
+    "type": "Air Quality",
+    "location": "Chemistry Lab Building A",
+    "description": "Monitors CO2, VOC, and particulate matter levels.",
+    "ownerId": "u4",
+    "status": "offline",
+    "visibility": "catalog",
+    "lastSeen": "2024-03-14T09:15:00Z",
+    "heartbeatInterval": 120,
+    "metrics": [
+      {
+        "key": "co2",
+        "label": "CO2 Level",
+        "valueType": "number",
+        "unit": "ppm"
+      },
+      {
+        "key": "voc",
+        "label": "VOC Index",
+        "valueType": "number",
+        "unit": "index"
+      },
+      {
+        "key": "pm25",
+        "label": "PM2.5",
+        "valueType": "number",
+        "unit": "µg/m³"
+      }
+    ],
+    "apiKey": "iot_key_jkl012mno678",
+    "createdAt": "2024-02-15"
+  },
+  {
+    "id": "dev-005",
+    "name": "Parking Lot Sensor A",
+    "type": "Parking Sensor",
+    "location": "Parking Area A",
+    "description": "Tracks available parking spots using ultrasonic sensors.",
+    "ownerId": "u1",
+    "status": "suspended",
+    "visibility": "private",
+    "lastSeen": "2024-03-10T16:00:00Z",
+    "heartbeatInterval": 60,
+    "metrics": [
+      {
+        "key": "available_spots",
+        "label": "Available Spots",
+        "valueType": "number",
+        "unit": "spots"
+      },
+      {
+        "key": "total_spots",
+        "label": "Total Spots",
+        "valueType": "number",
+        "unit": "spots"
+      }
+    ],
+    "apiKey": "iot_key_pqr345stu901",
+    "createdAt": "2024-01-25"
+  },
+  {
+    "id": "dev-006",
+    "name": "Energy Meter Building 5",
+    "type": "Energy Meter",
+    "location": "Building 5 Electrical Room",
+    "description": "Real-time energy consumption monitoring.",
+    "ownerId": "u4",
+    "status": "online",
+    "visibility": "private",
+    "lastSeen": "2024-03-15T14:32:30Z",
+    "heartbeatInterval": 300,
+    "metrics": [
+      {
+        "key": "power",
+        "label": "Current Power",
+        "valueType": "number",
+        "unit": "kW"
+      },
+      {
+        "key": "energy_today",
+        "label": "Energy Today",
+        "valueType": "number",
+        "unit": "kWh"
+      }
+    ],
+    "apiKey": "iot_key_vwx678yza234",
+    "createdAt": "2024-03-01"
+  },
+  {
+    "id": "dev_1780359915440_j9iiakuq",
+    "name": "contoh",
+    "type": "contoh 1",
+    "location": "bruh",
+    "description": "test",
+    "ownerId": "u1",
+    "status": "online",
+    "visibility": "private",
+    "lastSeen": "2026-06-02T00:25:15.440Z",
+    "heartbeatInterval": 60,
+    "metrics": [
+      {
+        "key": "occupancy",
+        "label": "Occupancy Count",
+        "valueType": "number",
+        "unit": "people"
+      },
+      {
+        "key": "occupancy_pct",
+        "label": "Occupancy %",
+        "valueType": "number",
+        "unit": "%"
+      }
+    ],
+    "apiKey": "iot_key_NVXMXNM4HP",
+    "createdAt": "2026-06-02T00:25:15.440Z"
+  },
+  {
+    "id": "dev_1780359999933_boskg442",
+    "name": "a",
+    "type": "b",
+    "location": "c",
+    "description": "d",
+    "ownerId": "u1",
+    "status": "online",
+    "visibility": "private",
+    "lastSeen": "2026-06-02T00:26:39.933Z",
+    "heartbeatInterval": 60,
+    "metrics": [
+      {
+        "key": "noise_level",
+        "label": "Noise Level",
+        "valueType": "number",
+        "unit": "dB"
+      },
+      {
+        "key": "peak_noise",
+        "label": "Peak Noise",
+        "valueType": "number",
+        "unit": "dB"
+      }
+    ],
+    "apiKey": "iot_key_11BAMQVAJI",
+    "createdAt": "2026-06-02T00:26:39.934Z"
+  }
+]

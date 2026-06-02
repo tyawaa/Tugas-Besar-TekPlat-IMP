@@ -29,8 +29,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Device, AccessRequest, TelemetryRecord, deviceHealth } from '@/lib/mock-data'
-import { IoTBridgeDataStore } from '@/lib/data-store'
-import { IoTBridgeActions } from '@/lib/actions'
+import { getDevices, getAccessRequests, getTelemetryHistory, updateDeviceAction } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { toast } from '@/hooks/use-toast'
 import { formatDistanceToNow } from 'date-fns'
@@ -44,36 +43,39 @@ export function DeviceOwnerDashboard() {
   const [allDevices, setAllDevices] = useState<Device[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
 
-  // Load data from data store
+  // Load data from API
   useEffect(() => {
     if (!userId) return
-    
-    const loadData = () => {
-      const devices = IoTBridgeDataStore.getDevicesByOwner(userId)
-      setOwnerDevices(devices)
-      setAllDevices(IoTBridgeDataStore.getAllDevices())
-      
-      // Get pending requests for owner's devices
-      const deviceIds = devices.map(d => d.id)
-      const allRequests = IoTBridgeDataStore.getAllAccessRequests()
-      const pending = allRequests.filter(
-        ar => deviceIds.includes(ar.deviceId) && ar.status === 'pending'
-      )
-      setPendingRequests(pending)
-      
-      // Get recent telemetry for owner's devices
-      const telemetry: TelemetryRecord[] = []
-      devices.forEach(d => {
-        const deviceTelemetry = IoTBridgeDataStore.getTelemetryByDevice(d.id)
-        telemetry.push(...deviceTelemetry)
-      })
-      // Sort by timestamp and take last 5
-      telemetry.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      setRecentTelemetry(telemetry.slice(0, 5))
+
+    const loadData = async () => {
+      try {
+        const [devices, requests] = await Promise.all([getDevices(), getAccessRequests()])
+        const ownerDevices = devices.filter((device) => device.ownerId === userId)
+        setOwnerDevices(ownerDevices)
+        setAllDevices(devices)
+
+        const deviceIds = ownerDevices.map((d) => d.id)
+        const pending = requests.filter(
+          (ar) => deviceIds.includes(ar.deviceId) && ar.status === 'pending'
+        )
+        setPendingRequests(pending)
+
+        const telemetryRecords: TelemetryRecord[] = []
+        await Promise.all(
+          ownerDevices.map(async (device) => {
+            const history = await getTelemetryHistory(device.id)
+            telemetryRecords.push(...history)
+          })
+        )
+        telemetryRecords.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        setRecentTelemetry(telemetryRecords.slice(0, 5))
+      } catch (error) {
+        console.error('Failed to load device owner dashboard', error)
+      }
     }
+
     loadData()
-    
-    // Refresh periodically
+
     const interval = setInterval(loadData, 5000)
     return () => clearInterval(interval)
   }, [userId, refreshKey])
@@ -96,14 +98,18 @@ export function DeviceOwnerDashboard() {
     })
   }
 
-  const handleArchiveDevice = (deviceId: string) => {
+  const handleArchiveDevice = async (deviceId: string) => {
     if (!userId || !userName || !userRole) return
-    IoTBridgeActions.archiveDevice(deviceId, userId, userName, userRole)
-    setRefreshKey(prev => prev + 1)
-    toast({
-      title: 'Device archived',
-      description: 'Archived devices are removed from active device lists and the catalog.',
-    })
+    try {
+      await updateDeviceAction(deviceId, 'archive', userId, userName, userRole)
+      setRefreshKey((prev) => prev + 1)
+      toast({
+        title: 'Device archived',
+        description: 'Archived devices are removed from active device lists and the catalog.',
+      })
+    } catch (error) {
+      console.error('Failed to archive device', error)
+    }
   }
 
   return (

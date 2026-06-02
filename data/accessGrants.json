@@ -1,0 +1,14 @@
+[
+  {
+    "id": "ag-002",
+    "deviceId": "dev-001",
+    "developerId": "u3",
+    "developerName": "Budi Santoso",
+    "scopes": [
+      "telemetry:read"
+    ],
+    "expiresAt": "2024-04-30",
+    "token": "grant_tok_jkl012mno345pqr678",
+    "createdAt": "2024-02-15"
+  }
+]

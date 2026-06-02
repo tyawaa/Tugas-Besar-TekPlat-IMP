@@ -14,7 +14,7 @@ import {
   ArrowRight,
 } from 'lucide-react'
 import { Device, AccessGrant, AccessRequest } from '@/lib/mock-data'
-import { IoTBridgeDataStore } from '@/lib/data-store'
+import { getDevices, getAccessGrants, getAccessRequests } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { formatDistanceToNow } from 'date-fns'
 
@@ -25,30 +25,30 @@ export function DeveloperDashboard() {
   const [myPendingRequests, setMyPendingRequests] = useState<AccessRequest[]>([])
   const [allDevices, setAllDevices] = useState<Device[]>([])
 
-  // Load data from data store
+  // Load data from API
   useEffect(() => {
     if (!userId) return
-    
-    const loadData = () => {
-      const devices = IoTBridgeDataStore.getAllDevices()
-      setAllDevices(devices)
-      
-      // Get catalog devices
-      const catalog = devices.filter(d => d.visibility === 'catalog' && d.status !== 'archived')
-      setCatalogDevices(catalog)
-      
-      // Get grants for current developer
-      const grants = IoTBridgeDataStore.getAccessGrantsByDeveloper(userId)
-      setMyGrants(grants)
-      
-      // Get pending requests for current developer
-      const requests = IoTBridgeDataStore.getAccessRequestsByDeveloper(userId)
-      const pending = requests.filter(r => r.status === 'pending')
-      setMyPendingRequests(pending)
+
+    const loadData = async () => {
+      try {
+        const [devices, grants, requests] = await Promise.all([
+          getDevices(),
+          getAccessGrants(),
+          getAccessRequests(),
+        ])
+
+        setAllDevices(devices)
+        setCatalogDevices(devices.filter((d) => d.visibility === 'catalog' && d.status !== 'archived'))
+        setMyGrants(grants.filter((grant) => grant.developerId === userId))
+        const pending = requests.filter((r) => r.developerId === userId && r.status === 'pending')
+        setMyPendingRequests(pending)
+      } catch (error) {
+        console.error('Failed to load developer dashboard', error)
+      }
     }
+
     loadData()
-    
-    // Refresh periodically
+
     const interval = setInterval(loadData, 5000)
     return () => clearInterval(interval)
   }, [userId])

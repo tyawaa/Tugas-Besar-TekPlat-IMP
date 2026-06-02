@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/select'
 import { Copy, Eye, EyeOff, Calendar, Code } from 'lucide-react'
 import { AccessGrant, Device, TelemetryRecord } from '@/lib/mock-data'
-import { IoTBridgeDataStore } from '@/lib/data-store'
+import { getAccessGrants, getDevices, getTelemetryHistory } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { format } from 'date-fns'
@@ -31,33 +31,41 @@ export default function DataExplorerPage() {
   const [selectedMetric, setSelectedMetric] = useState('temperature')
   const [dateRange, setDateRange] = useState('24h')
 
-  // Load grants for current developer
+  // Load grants and devices for current developer
   useEffect(() => {
     if (!userId) return
-    
-    const loadData = () => {
-      // Get grants for the current developer
-      const developerGrants = IoTBridgeDataStore.getAccessGrantsByDeveloper(userId)
-      setGrants(developerGrants)
-      
-      // Get all devices
-      const allDevices = IoTBridgeDataStore.getAllDevices()
-      setDevices(allDevices)
-      
-      // Set default selected device
-      if (developerGrants.length > 0 && !selectedDeviceId) {
-        setSelectedDeviceId(developerGrants[0].deviceId)
+
+    const loadData = async () => {
+      try {
+        const [grants, allDevices] = await Promise.all([getAccessGrants(), getDevices()])
+        const developerGrants = grants.filter((grant) => grant.developerId === userId)
+        setGrants(developerGrants)
+        setDevices(allDevices)
+        if (developerGrants.length > 0 && !selectedDeviceId) {
+          setSelectedDeviceId(developerGrants[0].deviceId)
+        }
+      } catch (error) {
+        console.error('Failed to load data explorer data', error)
       }
     }
+
     loadData()
   }, [userId, selectedDeviceId])
 
   // Load telemetry when device changes
   useEffect(() => {
-    if (selectedDeviceId) {
-      const deviceTelemetry = IoTBridgeDataStore.getTelemetryByDevice(selectedDeviceId)
-      setTelemetryData(deviceTelemetry)
+    if (!selectedDeviceId) return
+
+    const loadTelemetry = async () => {
+      try {
+        const history = await getTelemetryHistory(selectedDeviceId)
+        setTelemetryData(history)
+      } catch (error) {
+        console.error('Failed to load telemetry history', error)
+      }
     }
+
+    loadTelemetry()
   }, [selectedDeviceId])
 
   const selectedGrant = grants.find((g) => g.deviceId === selectedDeviceId)

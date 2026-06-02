@@ -1,0 +1,60 @@
+[
+  {
+    "id": "t1",
+    "deviceId": "dev-001",
+    "timestamp": "2024-03-15T14:32:00Z",
+    "data": {
+      "temperature": 28.5,
+      "humidity": 65,
+      "pressure": 1013.25
+    }
+  },
+  {
+    "id": "t2",
+    "deviceId": "dev-001",
+    "timestamp": "2024-03-15T14:31:00Z",
+    "data": {
+      "temperature": 28.4,
+      "humidity": 64,
+      "pressure": 1013.2
+    }
+  },
+  {
+    "id": "t3",
+    "deviceId": "dev-001",
+    "timestamp": "2024-03-15T14:30:00Z",
+    "data": {
+      "temperature": 28.3,
+      "humidity": 65,
+      "pressure": 1013.22
+    }
+  },
+  {
+    "id": "t4",
+    "deviceId": "dev-002",
+    "timestamp": "2024-03-15T14:30:00Z",
+    "data": {
+      "noise_level": 42,
+      "peak_noise": 58
+    }
+  },
+  {
+    "id": "t5",
+    "deviceId": "dev-003",
+    "timestamp": "2024-03-15T14:31:00Z",
+    "data": {
+      "occupancy": 23,
+      "capacity": 40
+    }
+  },
+  {
+    "id": "t6",
+    "deviceId": "dev-004",
+    "timestamp": "2024-03-14T09:15:00Z",
+    "data": {
+      "co2": 450,
+      "voc": 120,
+      "pm25": 12
+    }
+  }
+]

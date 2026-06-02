@@ -14,9 +14,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { AccessRequest, AccessGrant, Device } from '@/lib/mock-data'
-import { IoTBridgeDataStore } from '@/lib/data-store'
-import { IoTBridgeActions } from '@/lib/actions'
 import { useAuth } from '@/lib/auth-context'
+import { getAccessRequests, getAccessGrants, getDevices, actionAccessRequest, revokeAccessGrant } from '@/lib/api'
 import { StatusBadge, KPICard } from '@/components/layout/dashboard-layout'
 import { DashboardLayout } from '@/components/layout/dashboard-layout'
 import { format } from 'date-fns'
@@ -31,27 +30,27 @@ export default function AccessRequestsPage() {
   const [devices, setDevices] = useState<Device[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
 
-  // Load data from data store
+  // Load data from API
   useEffect(() => {
-    const loadData = () => {
-      const allDevices = IoTBridgeDataStore.getAllDevices()
-      setDevices(allDevices)
-      
-      // For device owner, show requests for devices they own
-      if (userRole === 'device_owner' && userId) {
-        const ownerDevices = allDevices.filter(d => d.ownerId === userId)
-        const ownerDeviceIds = ownerDevices.map(d => d.id)
-        const allRequests = IoTBridgeDataStore.getAllAccessRequests()
-        const filteredRequests = allRequests.filter(ar => ownerDeviceIds.includes(ar.deviceId))
-        setRequests(filteredRequests)
-        
-        const allGrants = IoTBridgeDataStore.getAllAccessGrants()
-        const filteredGrants = allGrants.filter(g => ownerDeviceIds.includes(g.deviceId))
-        setGrants(filteredGrants)
-      } else if (userRole === 'admin') {
-        // Admin sees all
-        setRequests(IoTBridgeDataStore.getAllAccessRequests())
-        setGrants(IoTBridgeDataStore.getAllAccessGrants())
+    const loadData = async () => {
+      try {
+        const allDevices = await getDevices()
+        setDevices(allDevices)
+
+        const allRequests = await getAccessRequests()
+        const allGrants = await getAccessGrants()
+
+        if (userRole === 'device_owner' && userId) {
+          const ownerDevices = allDevices.filter(d => d.ownerId === userId)
+          const ownerDeviceIds = ownerDevices.map(d => d.id)
+          setRequests(allRequests.filter(ar => ownerDeviceIds.includes(ar.deviceId)))
+          setGrants(allGrants.filter(g => ownerDeviceIds.includes(g.deviceId)))
+        } else if (userRole === 'admin') {
+          setRequests(allRequests)
+          setGrants(allGrants)
+        }
+      } catch (error) {
+        console.error('Failed to load access requests', error)
       }
     }
     loadData()
@@ -66,24 +65,36 @@ export default function AccessRequestsPage() {
     ? requests 
     : requests.filter(ar => ar.status === filter)
 
-  const handleApprove = (id: string) => {
+  const handleApprove = async (id: string) => {
     if (!userId || !userName || !userRole) return
-    IoTBridgeActions.approveAccessRequest(id, userId, userName, userRole)
-    setRefreshKey(prev => prev + 1)
-    setSelectedRequest(null)
+    try {
+      await actionAccessRequest(id, 'approve', userId, userName, userRole)
+      setRefreshKey(prev => prev + 1)
+      setSelectedRequest(null)
+    } catch (error) {
+      console.error('Failed to approve request', error)
+    }
   }
 
-  const handleReject = (id: string) => {
+  const handleReject = async (id: string) => {
     if (!userId || !userName || !userRole) return
-    IoTBridgeActions.rejectAccessRequest(id, userId, userName, userRole)
-    setRefreshKey(prev => prev + 1)
-    setSelectedRequest(null)
+    try {
+      await actionAccessRequest(id, 'reject', userId, userName, userRole)
+      setRefreshKey(prev => prev + 1)
+      setSelectedRequest(null)
+    } catch (error) {
+      console.error('Failed to reject request', error)
+    }
   }
 
-  const handleRevoke = (grantId: string) => {
+  const handleRevoke = async (grantId: string) => {
     if (!userId || !userName || !userRole) return
-    IoTBridgeActions.revokeAccessGrant(grantId, userId, userName, userRole)
-    setRefreshKey(prev => prev + 1)
+    try {
+      await revokeAccessGrant(grantId, userId, userName, userRole)
+      setRefreshKey(prev => prev + 1)
+    } catch (error) {
+      console.error('Failed to revoke grant', error)
+    }
   }
 
   const getDeviceName = (deviceId: string) => {
