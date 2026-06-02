@@ -48,13 +48,13 @@ export async function POST(
     return NextResponse.json({ error: 'Access request not found' }, { status: 404 })
   }
 
-  if (requestItem.status !== 'pending') {
-    return NextResponse.json({ error: 'Access request is not pending' }, { status: 400 })
-  }
-
   if (action === 'cancel') {
     if (!hasUserRole(currentUser, 'developer') || requestItem.developerId !== currentUser.id) {
       return NextResponse.json({ error: 'Only the requesting developer can cancel this request.' }, { status: 403 })
+    }
+
+    if (requestItem.status !== 'pending' && requestItem.status !== 'pending_payment') {
+      return NextResponse.json({ error: 'Only pending requests can be cancelled.' }, { status: 400 })
     }
 
     const updatedRequest = await ServerDataStore.updateAccessRequest(requestId, { status: 'cancelled' })
@@ -64,6 +64,10 @@ export async function POST(
 
     await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'access.cancelled', 'access_request', requestId)
     return NextResponse.json({ request: updatedRequest })
+  }
+
+  if (requestItem.status !== 'pending') {
+    return NextResponse.json({ error: 'Access request is not pending' }, { status: 400 })
   }
 
   const device = await ServerDataStore.getDeviceById(requestItem.deviceId)

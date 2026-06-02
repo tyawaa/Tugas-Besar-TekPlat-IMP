@@ -77,6 +77,9 @@ export async function PATCH(
       const visibility = body.visibility
       const heartbeatInterval = Number(body.heartbeatInterval)
       const metrics = body.metrics
+      const billingType = body.billingType === 'one_time' ? 'one_time' : 'free'
+      const accessPrice = billingType === 'one_time' ? Math.max(0, Math.round(Number(body.accessPrice))) : 0
+      const currency = sanitizeText(body.currency)?.toUpperCase() || 'IDR'
 
       if (
         !name ||
@@ -85,6 +88,7 @@ export async function PATCH(
         (visibility !== 'private' && visibility !== 'catalog') ||
         !Number.isFinite(heartbeatInterval) ||
         heartbeatInterval <= 0 ||
+        !Number.isFinite(accessPrice) ||
         !isMetricList(metrics)
       ) {
         return NextResponse.json({ error: 'Invalid device update payload.' }, { status: 400 })
@@ -98,6 +102,9 @@ export async function PATCH(
         visibility,
         heartbeatInterval,
         metrics,
+        billingType,
+        accessPrice,
+        currency,
       })
       await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'device.updated', 'device', deviceId)
       break

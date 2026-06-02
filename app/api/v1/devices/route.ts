@@ -3,6 +3,7 @@ import { ServerDataStore } from '@/lib/server-data-store'
 import { requireCurrentUser } from '@/lib/auth-server'
 import { filterDevicesForUser, isGrantActive } from '@/lib/access-control'
 import { hasUserRole } from '@/lib/auth-types'
+import { BillingType, Device } from '@/lib/mock-data'
 
 export async function GET(request: Request) {
   const currentUser = await requireCurrentUser(request)
@@ -51,7 +52,14 @@ export async function POST(request: Request) {
     visibility,
     heartbeatInterval,
     metrics,
+    billingType = 'free',
+    accessPrice = 0,
+    currency = 'IDR',
   } = body
+  const normalizedBillingType: BillingType = billingType === 'one_time' ? 'one_time' : 'free'
+  const normalizedAccessPrice = normalizedBillingType === 'one_time'
+    ? Math.max(0, Math.round(Number(accessPrice)))
+    : 0
 
   if (
     !name ||
@@ -59,12 +67,13 @@ export async function POST(request: Request) {
     !location ||
     !visibility ||
     !Number.isFinite(Number(heartbeatInterval)) ||
-    !Array.isArray(metrics)
+    !Array.isArray(metrics) ||
+    !Number.isFinite(normalizedAccessPrice)
   ) {
     return NextResponse.json({ error: 'Missing required fields to register a device.' }, { status: 400 })
   }
 
-  const device = {
+  const device: Device = {
     id: `dev_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
     name,
     type,
@@ -78,6 +87,9 @@ export async function POST(request: Request) {
     metrics,
     apiKey: `iot_key_${Math.random().toString(36).substring(2, 22).toUpperCase()}`,
     createdAt: new Date().toISOString(),
+    billingType: normalizedBillingType,
+    accessPrice: normalizedAccessPrice,
+    currency: typeof currency === 'string' && currency.trim() ? currency.trim().toUpperCase() : 'IDR',
   }
 
   await ServerDataStore.addDevice(device)

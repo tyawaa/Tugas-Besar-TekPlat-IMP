@@ -98,7 +98,7 @@ export function KPICard({ title, value, icon, trend, className }: KPICardProps) 
 }
 
 interface StatusBadgeProps {
-  status: 'online' | 'offline' | 'suspended' | 'archived' | 'pending' | 'approved' | 'rejected' | 'revoked' | 'cancelled'
+  status: 'online' | 'offline' | 'suspended' | 'archived' | 'pending' | 'pending_payment' | 'approved' | 'rejected' | 'revoked' | 'cancelled'
 }
 
 export function StatusBadge({ status }: StatusBadgeProps) {
@@ -108,6 +108,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
     suspended: 'bg-amber-50 text-amber-700 border-amber-200',
     archived: 'bg-slate-100 text-slate-600 border-slate-200',
     pending: 'bg-amber-50 text-amber-700 border-amber-200',
+    pending_payment: 'bg-blue-50 text-blue-700 border-blue-200',
     approved: 'bg-green-50 text-green-700 border-green-200',
     rejected: 'bg-red-50 text-red-700 border-red-200',
     revoked: 'bg-slate-100 text-slate-600 border-slate-200',
@@ -120,7 +121,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
       styles[status]
     )}>
       {status === 'online' && <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-green-600" />}
-      {status}
+      {status.replace('_', ' ')}
     </span>
   )
 }

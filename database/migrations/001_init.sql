@@ -30,7 +30,10 @@ CREATE TABLE IF NOT EXISTS devices (
   heartbeat_interval INTEGER NOT NULL,
   metrics JSONB NOT NULL DEFAULT '[]'::jsonb,
   api_key TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  billing_type TEXT NOT NULL DEFAULT 'free' CHECK (billing_type IN ('free', 'one_time')),
+  access_price INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'IDR'
 );
 
 CREATE TABLE IF NOT EXISTS telemetry (
@@ -49,8 +52,24 @@ CREATE TABLE IF NOT EXISTS access_requests (
   purpose TEXT NOT NULL,
   scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
   requested_until TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'revoked')),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'pending_payment', 'approved', 'rejected', 'revoked', 'cancelled')),
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS orders (
+  id TEXT PRIMARY KEY,
+  access_request_id TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  buyer_id TEXT NOT NULL,
+  seller_id TEXT NOT NULL,
+  total_amount INTEGER NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'IDR',
+  payment_method TEXT,
+  payment_status TEXT NOT NULL CHECK (payment_status IN ('PENDING', 'PAID', 'FAILED', 'EXPIRED')),
+  snap_token TEXT,
+  midtrans_order_id TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS access_grants (
@@ -83,6 +102,8 @@ CREATE INDEX IF NOT EXISTS idx_devices_owner_id ON devices (owner_id);
 CREATE INDEX IF NOT EXISTS idx_telemetry_device_observed_at ON telemetry (device_id, observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_access_requests_device_id ON access_requests (device_id);
 CREATE INDEX IF NOT EXISTS idx_access_requests_developer_id ON access_requests (developer_id);
+CREATE INDEX IF NOT EXISTS idx_orders_access_request_id ON orders (access_request_id);
+CREATE INDEX IF NOT EXISTS idx_orders_midtrans_order_id ON orders (midtrans_order_id);
 CREATE INDEX IF NOT EXISTS idx_access_grants_device_id ON access_grants (device_id);
 CREATE INDEX IF NOT EXISTS idx_access_grants_developer_id ON access_grants (developer_id);
 CREATE INDEX IF NOT EXISTS idx_access_grants_token ON access_grants (token);

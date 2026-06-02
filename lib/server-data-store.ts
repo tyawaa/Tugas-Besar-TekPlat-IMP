@@ -4,12 +4,14 @@ import {
   Device,
   AccessRequest,
   AccessGrant,
+  Order,
   TelemetryRecord,
   AuditLog,
   UserRole,
   devices as initialDevices,
   accessRequests as initialAccessRequests,
   accessGrants as initialAccessGrants,
+  orders as initialOrders,
   telemetryRecords as initialTelemetryRecords,
   auditLogs as initialAuditLogs,
 } from './mock-data'
@@ -27,6 +29,7 @@ const FILES = {
   devices: 'devices.json',
   accessRequests: 'accessRequests.json',
   accessGrants: 'accessGrants.json',
+  orders: 'orders.json',
   telemetry: 'telemetry.json',
   auditLogs: 'auditLogs.json',
 }
@@ -166,6 +169,10 @@ export class ServerDataStore {
     return readCollection<AccessGrant[]>('accessGrants', initialAccessGrants)
   }
 
+  private static getOrdersFile(): Promise<Order[]> {
+    return readCollection<Order[]>('orders', initialOrders)
+  }
+
   private static getTelemetryFile(): Promise<TelemetryRecord[]> {
     return readCollection<TelemetryRecord[]>('telemetry', initialTelemetryRecords)
   }
@@ -184,6 +191,10 @@ export class ServerDataStore {
 
   private static writeAccessGrants(grants: AccessGrant[]) {
     return writeCollection('accessGrants', grants)
+  }
+
+  private static writeOrders(orders: Order[]) {
+    return writeCollection('orders', orders)
   }
 
   private static writeTelemetry(records: TelemetryRecord[]) {
@@ -368,6 +379,47 @@ export class ServerDataStore {
     if (filtered.length === grants.length) return false
     await this.writeAccessGrants(filtered)
     return true
+  }
+
+  static async getAllOrders(): Promise<Order[]> {
+    if (isPostgresConfigured()) return PostgresDataStore.getAllOrders()
+    return this.getOrdersFile()
+  }
+
+  static async getOrderById(id: string): Promise<Order | null> {
+    if (isPostgresConfigured()) return PostgresDataStore.getOrderById(id)
+    const orders = await this.getAllOrders()
+    return orders.find(order => order.id === id) || null
+  }
+
+  static async getOrderByMidtransOrderId(midtransOrderId: string): Promise<Order | null> {
+    if (isPostgresConfigured()) return PostgresDataStore.getOrderByMidtransOrderId(midtransOrderId)
+    const orders = await this.getAllOrders()
+    return orders.find(order => order.midtransOrderId === midtransOrderId) || null
+  }
+
+  static async getOrderByAccessRequestId(accessRequestId: string): Promise<Order | null> {
+    if (isPostgresConfigured()) return PostgresDataStore.getOrderByAccessRequestId(accessRequestId)
+    const orders = await this.getAllOrders()
+    return orders.find(order => order.accessRequestId === accessRequestId) || null
+  }
+
+  static async addOrder(order: Order): Promise<Order> {
+    if (isPostgresConfigured()) return PostgresDataStore.addOrder(order)
+    const orders = await this.getAllOrders()
+    orders.push(order)
+    await this.writeOrders(orders)
+    return order
+  }
+
+  static async updateOrder(id: string, updates: Partial<Order>): Promise<Order | null> {
+    if (isPostgresConfigured()) return PostgresDataStore.updateOrder(id, updates)
+    const orders = await this.getAllOrders()
+    const index = orders.findIndex(order => order.id === id)
+    if (index < 0) return null
+    orders[index] = { ...orders[index], ...updates, updatedAt: updates.updatedAt || new Date().toISOString() }
+    await this.writeOrders(orders)
+    return orders[index]
   }
 
   static async getAllTelemetry(): Promise<TelemetryRecord[]> {

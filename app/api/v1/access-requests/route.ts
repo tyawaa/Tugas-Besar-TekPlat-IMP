@@ -58,7 +58,7 @@ export async function POST(request: Request) {
   const hasPendingRequest = requests.some(request =>
     request.deviceId === deviceId &&
     request.developerId === currentUser.id &&
-    request.status === 'pending'
+    (request.status === 'pending' || request.status === 'pending_payment')
   )
 
   if (hasPendingRequest) {
@@ -76,6 +76,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'You already have active access to this device.' }, { status: 409 })
   }
 
+  const device = await ServerDataStore.getDeviceById(deviceId)
+  if (!device || device.visibility !== 'catalog' || device.status === 'archived') {
+    return NextResponse.json({ error: 'Device is not available in the catalog.' }, { status: 404 })
+  }
+
+  const requiresPayment = device.billingType === 'one_time' && Number(device.accessPrice || 0) > 0
+
   const requestItem = {
     id: `ar_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
     deviceId,
@@ -85,12 +92,19 @@ export async function POST(request: Request) {
     purpose,
     scopes,
     requestedUntil,
-    status: 'pending' as const,
+    status: requiresPayment ? 'pending_payment' as const : 'pending' as const,
     createdAt: new Date().toISOString(),
   }
 
   await ServerDataStore.addAccessRequest(requestItem)
-  await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'access.requested', 'access_request', requestItem.id)
+  await ServerDataStore.logAction(
+    currentUser.id,
+    currentUser.name,
+    currentUser.role,
+    requiresPayment ? 'access.payment_required' : 'access.requested',
+    'access_request',
+    requestItem.id
+  )
 
   return NextResponse.json(requestItem, { status: 201 })
 }

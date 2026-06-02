@@ -59,6 +59,9 @@ export default function PairDevicePage() {
   const [location, setLocation] = useState('')
   const [description, setDescription] = useState('')
   const [visibility, setVisibility] = useState<'private' | 'catalog'>('private')
+  const [billingType, setBillingType] = useState<'free' | 'one_time'>('free')
+  const [accessPrice, setAccessPrice] = useState('0')
+  const [currency, setCurrency] = useState('IDR')
   const [heartbeatInterval, setHeartbeatInterval] = useState('60')
   const [metrics, setMetrics] = useState<MetricDefinition[]>([])
   const [isSubmitted, setIsSubmitted] = useState(false)
@@ -110,6 +113,9 @@ export default function PairDevicePage() {
           valueType: m.valueType,
           unit: m.unit,
         })),
+        billingType,
+        accessPrice: billingType === 'one_time' ? Math.max(0, Math.round(Number(accessPrice || 0))) : 0,
+        currency: currency.trim().toUpperCase() || 'IDR',
       })
 
       setNewDeviceId(newDevice.id)
@@ -293,6 +299,34 @@ export default function PairDevicePage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div>
+                  <Label>Access Pricing</Label>
+                  <Select value={billingType} onValueChange={v => setBillingType(v as 'free' | 'one_time')}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="free">Free</SelectItem>
+                      <SelectItem value="one_time">Paid Once</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Price</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={accessPrice}
+                    disabled={billingType !== 'one_time'}
+                    onChange={e => setAccessPrice(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>Currency</Label>
+                  <Input value={currency} onChange={e => setCurrency(e.target.value)} />
+                </div>
+              </div>
               <div>
                 <Label>Expected Heartbeat Interval (seconds)</Label>
                 <Input type="number" value={heartbeatInterval} onChange={e => setHeartbeatInterval(e.target.value)} />
@@ -369,6 +403,9 @@ export default function PairDevicePage() {
                 <p className="text-sm"><strong>Type:</strong> {deviceType}</p>
                 <p className="text-sm"><strong>Location:</strong> {location}</p>
                 <p className="text-sm"><strong>Visibility:</strong> {visibility}</p>
+                <p className="text-sm">
+                  <strong>Access:</strong> {billingType === 'one_time' ? `${currency.toUpperCase()} ${Number(accessPrice || 0).toLocaleString('id-ID')}` : 'Free'}
+                </p>
                 <p className="text-sm"><strong>Metrics:</strong> {metrics.length} configured</p>
               </div>
 

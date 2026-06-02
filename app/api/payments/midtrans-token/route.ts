@@ -1,0 +1,160 @@
+import { NextResponse } from 'next/server'
+import midtransClient from 'midtrans-client'
+import { requireCurrentUser } from '@/lib/auth-server'
+import { ServerDataStore } from '@/lib/server-data-store'
+import { hasUserRole } from '@/lib/auth-types'
+import { Order } from '@/lib/mock-data'
+
+export const dynamic = 'force-dynamic'
+
+function getMidtransConfig() {
+  const serverKey = process.env.MIDTRANS_SERVER_KEY
+  const clientKey = process.env.MIDTRANS_CLIENT_KEY || process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY
+
+  if (!serverKey || !clientKey) {
+    throw new Error('Midtrans keys are not configured.')
+  }
+
+  return {
+    isProduction: false,
+    serverKey,
+    clientKey,
+  }
+}
+
+function getOrderTotal(value: unknown): number | null {
+  const amount = Number(value)
+  if (!Number.isFinite(amount) || amount <= 0) return null
+  return Math.round(amount)
+}
+
+function getSnapRedirectUrl(token: string) {
+  return `https://app.sandbox.midtrans.com/snap/v2/vtweb/${token}`
+}
+
+export async function POST(request: Request) {
+  const currentUser = await requireCurrentUser(request)
+  if (currentUser instanceof NextResponse) return currentUser
+
+  if (!hasUserRole(currentUser, 'developer')) {
+    return NextResponse.json({ error: 'Only developers can pay for device access.' }, { status: 403 })
+  }
+
+  let body: Record<string, unknown>
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Request body must be valid JSON.' }, { status: 400 })
+  }
+
+  const orderId = typeof body.orderId === 'string' ? body.orderId.trim() : ''
+  const totalAmount = getOrderTotal(body.totalAmount)
+  const customerName = typeof body.customerName === 'string' ? body.customerName.trim() : currentUser.name
+  const customerEmail = typeof body.customerEmail === 'string' ? body.customerEmail.trim() : currentUser.email
+
+  if (!orderId || !totalAmount || !customerName || !customerEmail) {
+    return NextResponse.json({ error: 'orderId, totalAmount, customerName, and customerEmail are required.' }, { status: 400 })
+  }
+
+  const accessRequest = await ServerDataStore.getAccessRequestById(orderId)
+  if (!accessRequest) {
+    return NextResponse.json({ error: 'Access request not found for this orderId.' }, { status: 404 })
+  }
+
+  if (accessRequest.developerId !== currentUser.id) {
+    return NextResponse.json({ error: 'You can only pay for your own access request.' }, { status: 403 })
+  }
+
+  if (accessRequest.status !== 'pending_payment') {
+    return NextResponse.json({ error: 'This access request is not waiting for payment.' }, { status: 400 })
+  }
+
+  const device = await ServerDataStore.getDeviceById(accessRequest.deviceId)
+  if (!device) {
+    return NextResponse.json({ error: 'Device not found.' }, { status: 404 })
+  }
+
+  const expectedAmount = Math.round(Number(device.accessPrice || 0))
+  if (device.billingType !== 'one_time' || expectedAmount <= 0) {
+    return NextResponse.json({ error: 'This device does not require payment.' }, { status: 400 })
+  }
+
+  if (totalAmount !== expectedAmount) {
+    return NextResponse.json({ error: 'Payment amount does not match the device access price.' }, { status: 400 })
+  }
+
+  const snap = new midtransClient.Snap(getMidtransConfig())
+  const now = new Date().toISOString()
+  const existingOrder = await ServerDataStore.getOrderByAccessRequestId(accessRequest.id)
+
+  if (existingOrder?.snapToken && existingOrder.paymentStatus === 'PENDING') {
+    return NextResponse.json({
+      token: existingOrder.snapToken,
+      redirect_url: getSnapRedirectUrl(existingOrder.snapToken),
+      order: existingOrder,
+    })
+  }
+
+  const order: Order = existingOrder || {
+    id: `ord_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
+    accessRequestId: accessRequest.id,
+    deviceId: device.id,
+    buyerId: currentUser.id,
+    sellerId: device.ownerId,
+    totalAmount,
+    currency: device.currency || 'IDR',
+    paymentStatus: 'PENDING',
+    midtransOrderId: `iotbridge-${accessRequest.id}-${Date.now()}`,
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  const transaction = await snap.createTransaction({
+    transaction_details: {
+      order_id: order.midtransOrderId,
+      gross_amount: order.totalAmount,
+    },
+    customer_details: {
+      first_name: customerName,
+      email: customerEmail,
+    },
+    item_details: [
+      {
+        id: device.id,
+        name: `Access to ${device.name}`.slice(0, 50),
+        price: order.totalAmount,
+        quantity: 1,
+      },
+    ],
+  })
+
+  const savedOrder = existingOrder
+    ? await ServerDataStore.updateOrder(existingOrder.id, {
+        totalAmount,
+        paymentStatus: 'PENDING',
+        snapToken: transaction.token,
+        updatedAt: now,
+      })
+    : await ServerDataStore.addOrder({
+        ...order,
+        snapToken: transaction.token,
+        updatedAt: now,
+      })
+
+  await ServerDataStore.logAction(
+    currentUser.id,
+    currentUser.name,
+    currentUser.role,
+    'payment.midtrans_token_created',
+    'access_request',
+    accessRequest.id,
+    'success',
+    `Midtrans order ${order.midtransOrderId}`
+  )
+
+  return NextResponse.json({
+    token: transaction.token,
+    redirect_url: transaction.redirect_url,
+    order: savedOrder,
+  })
+}

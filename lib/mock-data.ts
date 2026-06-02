@@ -1,6 +1,8 @@
 // Mock data for IoTBridge platform
 
 export type UserRole = 'device_owner' | 'developer' | 'admin'
+export type BillingType = 'free' | 'one_time'
+export type PaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'EXPIRED'
 
 export interface User {
   id: string
@@ -25,6 +27,9 @@ export interface Device {
   metrics: Metric[]
   apiKey: string
   createdAt: string
+  billingType?: BillingType
+  accessPrice?: number
+  currency?: string
 }
 
 export interface Metric {
@@ -50,7 +55,7 @@ export interface AccessRequest {
   purpose: string
   scopes: string[]
   requestedUntil: string
-  status: 'pending' | 'approved' | 'rejected' | 'revoked' | 'cancelled'
+  status: 'pending' | 'pending_payment' | 'approved' | 'rejected' | 'revoked' | 'cancelled'
   createdAt: string
 }
 
@@ -76,6 +81,22 @@ export interface AuditLog {
   targetId: string
   outcome: 'success' | 'failure'
   details?: string
+}
+
+export interface Order {
+  id: string
+  accessRequestId: string
+  deviceId: string
+  buyerId: string
+  sellerId: string
+  totalAmount: number
+  currency: string
+  paymentMethod?: string
+  paymentStatus: PaymentStatus
+  snapToken?: string
+  midtransOrderId: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface DeviceHealth {
@@ -343,6 +364,9 @@ export const accessGrants: AccessGrant[] = [
     createdAt: '2024-02-15',
   },
 ]
+
+// Mock Orders
+export const orders: Order[] = []
 
 // Mock Audit Logs
 export const auditLogs: AuditLog[] = [

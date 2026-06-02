@@ -24,7 +24,7 @@ import { CheckCircle2, XCircle, Clock, Eye, Ban } from 'lucide-react'
 export default function AccessRequestsPage() {
   const { userId, userName, userRole } = useAuth()
   const [selectedRequest, setSelectedRequest] = useState<AccessRequest | null>(null)
-  const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'revoked'>('all')
+  const [filter, setFilter] = useState<'all' | 'pending' | 'pending_payment' | 'approved' | 'rejected' | 'revoked'>('all')
   const [requests, setRequests] = useState<AccessRequest[]>([])
   const [grants, setGrants] = useState<AccessGrant[]>([])
   const [devices, setDevices] = useState<Device[]>([])
@@ -57,6 +57,7 @@ export default function AccessRequestsPage() {
   }, [userId, userRole, refreshKey])
 
   const pendingCount = requests.filter(ar => ar.status === 'pending').length
+  const pendingPaymentCount = requests.filter(ar => ar.status === 'pending_payment').length
   const approvedCount = requests.filter(ar => ar.status === 'approved').length
   const rejectedCount = requests.filter(ar => ar.status === 'rejected').length
   const revokedCount = requests.filter(ar => ar.status === 'revoked').length
@@ -110,8 +111,9 @@ export default function AccessRequestsPage() {
   return (
     <DashboardLayout title="Access Requests" subtitle="Review developer requests and control who can use your device data.">
       {/* KPI Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <KPICard title="Pending Requests" value={pendingCount} icon={<Clock className="h-5 w-5" />} />
+        <KPICard title="Pending Payments" value={pendingPaymentCount} icon={<Clock className="h-5 w-5" />} />
         <KPICard title="Approved Grants" value={approvedCount} icon={<CheckCircle2 className="h-5 w-5" />} />
         <KPICard title="Rejected Requests" value={rejectedCount} icon={<XCircle className="h-5 w-5" />} />
         <KPICard title="Revoked" value={revokedCount} icon={<Ban className="h-5 w-5" />} />
@@ -125,13 +127,21 @@ export default function AccessRequestsPage() {
         </CardHeader>
         <CardContent>
           <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)} className="w-full">
-            <TabsList className="grid w-full grid-cols-5">
+            <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="all">All</TabsTrigger>
               <TabsTrigger value="pending" className={pendingCount > 0 ? 'relative' : ''}>
                 Pending
                 {pendingCount > 0 && (
                   <Badge className="ml-2 bg-amber-100 text-amber-800">
                     {pendingCount}
+                  </Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="pending_payment" className={pendingPaymentCount > 0 ? 'relative' : ''}>
+                Payment
+                {pendingPaymentCount > 0 && (
+                  <Badge className="ml-2 bg-blue-100 text-blue-800">
+                    {pendingPaymentCount}
                   </Badge>
                 )}
               </TabsTrigger>
@@ -211,7 +221,7 @@ export default function AccessRequestsPage() {
                                   Revoke
                                 </Button>
                               )}
-                              {(request.status === 'rejected' || request.status === 'pending') && (
+                              {(request.status === 'rejected' || request.status === 'pending' || request.status === 'pending_payment') && (
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -303,6 +313,11 @@ export default function AccessRequestsPage() {
                   <Button className="flex-1 bg-primary hover:bg-primary/90" onClick={() => handleApprove(selectedRequest.id)}>
                     Approve
                   </Button>
+                </div>
+              )}
+              {selectedRequest.status === 'pending_payment' && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                  Waiting for Midtrans webhook confirmation. Owner approval is not needed for paid access.
                 </div>
               )}
             </div>

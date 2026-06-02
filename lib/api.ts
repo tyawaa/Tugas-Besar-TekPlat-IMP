@@ -1,5 +1,5 @@
 import { PublicUser } from './auth-types'
-import { AccessGrant, AccessRequest, AuditLog, Device, TelemetryRecord, UserRole } from './mock-data'
+import { AccessGrant, AccessRequest, AuditLog, Device, Order, TelemetryRecord, UserRole } from './mock-data'
 
 const baseUrl = '/api/v1'
 
@@ -91,7 +91,7 @@ export async function registerDevice(payload: Omit<Device, 'id' | 'apiKey' | 'cr
 
 export type DeviceUpdatePayload = Pick<
   Device,
-  'name' | 'type' | 'location' | 'description' | 'visibility' | 'heartbeatInterval' | 'metrics'
+  'name' | 'type' | 'location' | 'description' | 'visibility' | 'heartbeatInterval' | 'metrics' | 'billingType' | 'accessPrice' | 'currency'
 >
 
 export async function updateDevice(deviceId: string, payload: DeviceUpdatePayload): Promise<Device> {
@@ -159,6 +159,18 @@ export async function cancelAccessRequest(requestId: string): Promise<{ request:
 
 export async function getAccessGrants(): Promise<AccessGrant[]> {
   return fetchJson<AccessGrant[]>(`${baseUrl}/access-grants`)
+}
+
+export async function createMidtransPaymentToken(payload: {
+  orderId: string
+  totalAmount: number
+  customerName: string
+  customerEmail: string
+}): Promise<{ token: string; redirect_url: string; order: Order }> {
+  return fetchJson<{ token: string; redirect_url: string; order: Order }>('/api/payments/midtrans-token', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 export async function revokeAccessGrant(grantId: string, actorId: string, actorName: string, actorRole: UserRole): Promise<{ success: boolean }> {

@@ -136,6 +136,9 @@ export function DevicesContent() {
       description: device.description,
       visibility: device.visibility,
       heartbeatInterval: device.heartbeatInterval,
+      billingType: device.billingType || 'free',
+      accessPrice: device.accessPrice || 0,
+      currency: device.currency || 'IDR',
       metrics: device.metrics.map((metric) => ({ ...metric })),
     })
   }
@@ -193,6 +196,9 @@ export function DevicesContent() {
       location: editForm.location.trim(),
       description: editForm.description.trim(),
       heartbeatInterval: Number(editForm.heartbeatInterval),
+      billingType: editForm.billingType === 'one_time' ? 'one_time' : 'free',
+      accessPrice: editForm.billingType === 'one_time' ? Math.max(0, Math.round(Number(editForm.accessPrice || 0))) : 0,
+      currency: editForm.currency?.trim().toUpperCase() || 'IDR',
       metrics: editForm.metrics.map((metric) => ({
         key: metric.key.trim(),
         label: metric.label.trim(),
@@ -525,6 +531,43 @@ export function DevicesContent() {
                     <SelectItem value="catalog">Public Catalog</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Access Pricing</Label>
+                  <Select
+                    value={editForm.billingType || 'free'}
+                    onValueChange={(value) => updateEditField('billingType', value as Device['billingType'])}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="free">Free</SelectItem>
+                      <SelectItem value="one_time">Paid Once</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-access-price">Price</Label>
+                  <Input
+                    id="edit-access-price"
+                    type="number"
+                    min={0}
+                    disabled={editForm.billingType !== 'one_time'}
+                    value={editForm.accessPrice || 0}
+                    onChange={(event) => updateEditField('accessPrice', Number(event.target.value))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-currency">Currency</Label>
+                  <Input
+                    id="edit-currency"
+                    value={editForm.currency || 'IDR'}
+                    onChange={(event) => updateEditField('currency', event.target.value)}
+                  />
+                </div>
               </div>
 
               <div className="space-y-3">

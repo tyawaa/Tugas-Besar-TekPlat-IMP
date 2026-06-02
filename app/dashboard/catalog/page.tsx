@@ -35,10 +35,18 @@ import { AccessGrant, AccessRequest, Device, deviceHealth } from '@/lib/mock-dat
 import { useAuth } from '@/lib/auth-context'
 import { formatDistanceToNow } from 'date-fns'
 import { HealthBadge } from '@/components/devices/health-badge'
-import { cancelAccessRequest, createAccessRequest, getAccessGrants, getAccessRequests, getDevices } from '@/lib/api'
+import { cancelAccessRequest, createAccessRequest, createMidtransPaymentToken, getAccessGrants, getAccessRequests, getDevices } from '@/lib/api'
+
+declare global {
+  interface Window {
+    snap?: {
+      pay: (token: string, options?: Record<string, unknown>) => void
+    }
+  }
+}
 
 export default function CatalogPage() {
-  const { userId } = useAuth()
+  const { userId, userName, userEmail } = useAuth()
   const [catalogDevices, setCatalogDevices] = useState<Device[]>([])
   const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([])
   const [accessGrants, setAccessGrants] = useState<AccessGrant[]>([])
@@ -49,8 +57,21 @@ export default function CatalogPage() {
   const [showRequestModal, setShowRequestModal] = useState(false)
   const [requestSubmitted, setRequestSubmitted] = useState(false)
   const [updatingDeviceId, setUpdatingDeviceId] = useState<string | null>(null)
+  const [paymentMessage, setPaymentMessage] = useState('')
   const [purpose, setPurpose] = useState('')
   const [requestedUntil, setRequestedUntil] = useState('')
+
+  useEffect(() => {
+    const clientKey = process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY || process.env.VITE_MIDTRANS_CLIENT_KEY
+    if (!clientKey || document.querySelector('script[data-iotbridge-midtrans="snap"]')) return
+
+    const script = document.createElement('script')
+    script.src = 'https://app.sandbox.midtrans.com/snap/snap.js'
+    script.async = true
+    script.dataset.iotbridgeMidtrans = 'snap'
+    script.setAttribute('data-client-key', clientKey)
+    document.body.appendChild(script)
+  }, [])
 
   useEffect(() => {
     if (!userId) return
@@ -85,7 +106,7 @@ export default function CatalogPage() {
   const requestByDevice = useMemo(() => {
     const grouped = new Map<string, AccessRequest[]>()
     accessRequests
-      .filter(request => request.status === 'pending')
+      .filter(request => request.status === 'pending' || request.status === 'pending_payment')
       .forEach(request => {
         grouped.set(request.deviceId, [...(grouped.get(request.deviceId) || []), request])
       })
@@ -109,8 +130,49 @@ export default function CatalogPage() {
     setSelectedDevice(device)
     setShowRequestModal(true)
     setRequestSubmitted(false)
+    setPaymentMessage('')
     setPurpose('')
     setRequestedUntil('')
+  }
+
+  const isPaidDevice = (device: Device) => device.billingType === 'one_time' && Number(device.accessPrice || 0) > 0
+
+  const formatPrice = (device: Device) => {
+    if (!isPaidDevice(device)) return 'Free'
+    return `${device.currency || 'IDR'} ${Number(device.accessPrice || 0).toLocaleString('id-ID')}`
+  }
+
+  const handlePayForRequest = async (request: AccessRequest, device: Device) => {
+    if (!userName || !userEmail) return
+
+    try {
+      setUpdatingDeviceId(device.id)
+      setPaymentMessage('Opening Midtrans payment...')
+      const payment = await createMidtransPaymentToken({
+        orderId: request.id,
+        totalAmount: Number(device.accessPrice || 0),
+        customerName: userName,
+        customerEmail: userEmail,
+      })
+
+      const options = {
+        onSuccess: () => setPaymentMessage('Payment submitted successfully. Waiting for webhook confirmation.'),
+        onPending: () => setPaymentMessage('Payment is pending. Final access will be granted after Midtrans webhook confirms it.'),
+        onError: () => setPaymentMessage('Payment failed. You can try again from this catalog card.'),
+        onClose: () => setPaymentMessage('Payment popup closed. Your access is still waiting for payment.'),
+      }
+
+      if (window.snap) {
+        window.snap.pay(payment.token, options)
+      } else {
+        window.location.href = payment.redirect_url
+      }
+    } catch (error) {
+      console.error('Failed to create Midtrans payment token', error)
+      setPaymentMessage('Failed to open Midtrans payment. Please try again.')
+    } finally {
+      setUpdatingDeviceId(null)
+    }
   }
 
   const handleSubmitRequest = async () => {
@@ -127,6 +189,9 @@ export default function CatalogPage() {
       })
       setAccessRequests(current => [...current, request])
       setRequestSubmitted(true)
+      if (isPaidDevice(selectedDevice)) {
+        await handlePayForRequest(request, selectedDevice)
+      }
     } catch (error) {
       console.error('Failed to submit access request', error)
     } finally {
@@ -213,6 +278,7 @@ export default function CatalogPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filteredDevices.map((device) => {
             const pendingRequests = requestByDevice.get(device.id) || []
+            const pendingPaymentRequest = pendingRequests.find((request) => request.status === 'pending_payment')
             const activeGrant = activeGrantByDevice.get(device.id)
             const isUpdating = updatingDeviceId === device.id
 
@@ -250,6 +316,13 @@ export default function CatalogPage() {
                       </div>
                     </div>
 
+                    <div className="mt-4">
+                      <p className="text-xs font-medium text-muted-foreground mb-2">Access Price</p>
+                      <Badge variant={isPaidDevice(device) ? 'outline' : 'secondary'} className="text-xs">
+                        {formatPrice(device)}
+                      </Badge>
+                    </div>
+
                     <div className="mt-4 pt-4 border-t border-border">
                       <p className="text-xs font-medium text-muted-foreground mb-2">Health</p>
                       <HealthBadge score={getDeviceHealth(device.id).score} compact />
@@ -261,6 +334,14 @@ export default function CatalogPage() {
                         <Link href={`/dashboard/data-explorer?device=${activeGrant.deviceId}`}>
                           View Data
                         </Link>
+                      </Button>
+                    ) : pendingPaymentRequest ? (
+                      <Button
+                        onClick={() => handlePayForRequest(pendingPaymentRequest, device)}
+                        disabled={isUpdating}
+                        className="w-full bg-primary hover:bg-primary/90"
+                      >
+                        {isUpdating ? 'Opening...' : 'Bayar dengan Midtrans'}
                       </Button>
                     ) : pendingRequests.length > 0 ? (
                       <Button
@@ -277,7 +358,7 @@ export default function CatalogPage() {
                         disabled={isUpdating}
                         className="w-full bg-primary hover:bg-primary/90"
                       >
-                        {isUpdating ? 'Submitting...' : 'Request Access'}
+                        {isUpdating ? 'Submitting...' : isPaidDevice(device) ? 'Bayar dengan Midtrans' : 'Request Access'}
                       </Button>
                     )}
                   </div>
@@ -306,14 +387,21 @@ export default function CatalogPage() {
                   <div>
                     <DialogTitle>Request Submitted</DialogTitle>
                     <DialogDescription>
-                      Your access request has been sent to the device owner.
+                      {selectedDevice && isPaidDevice(selectedDevice)
+                        ? 'Complete payment in Midtrans. Access is granted only after the webhook confirms payment.'
+                        : 'Your access request has been sent to the device owner.'}
                     </DialogDescription>
                   </div>
                 </div>
               </DialogHeader>
               <div className="rounded-lg border border-border bg-muted/30 p-4">
                 <p className="text-sm font-medium text-foreground">{selectedDevice?.name}</p>
-                <p className="text-sm text-muted-foreground">Status: Pending Owner Approval</p>
+                <p className="text-sm text-muted-foreground">
+                  Status: {selectedDevice && isPaidDevice(selectedDevice) ? 'Pending Payment' : 'Pending Owner Approval'}
+                </p>
+                {paymentMessage && (
+                  <p className="mt-2 text-sm text-muted-foreground">{paymentMessage}</p>
+                )}
               </div>
               <DialogFooter>
                 <Button onClick={() => setShowRequestModal(false)}>Close</Button>
@@ -347,6 +435,12 @@ export default function CatalogPage() {
                     Default scope allows reading telemetry data
                   </p>
                 </div>
+                {selectedDevice && (
+                  <div className="rounded-lg border border-border bg-muted/30 p-3">
+                    <p className="text-sm font-medium text-foreground">Access Price</p>
+                    <p className="text-sm text-muted-foreground">{formatPrice(selectedDevice)}</p>
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="until">Access Until</Label>
                   <Input
@@ -362,7 +456,7 @@ export default function CatalogPage() {
                   Cancel
                 </Button>
                 <Button onClick={handleSubmitRequest} disabled={Boolean(updatingDeviceId)} className="bg-primary hover:bg-primary/90">
-                  {updatingDeviceId ? 'Submitting...' : 'Submit Request'}
+                  {updatingDeviceId ? 'Submitting...' : selectedDevice && isPaidDevice(selectedDevice) ? 'Bayar dengan Midtrans' : 'Submit Request'}
                 </Button>
               </DialogFooter>
             </>

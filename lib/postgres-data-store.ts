@@ -4,12 +4,14 @@ import {
   AccessRequest,
   AuditLog,
   Device,
+  Order,
   TelemetryRecord,
   UserRole,
   accessGrants as initialAccessGrants,
   accessRequests as initialAccessRequests,
   auditLogs as initialAuditLogs,
   devices as initialDevices,
+  orders as initialOrders,
   telemetryRecords as initialTelemetryRecords,
 } from './mock-data'
 import { AuthSession, StoredUser, normalizeStoredUser, normalizeUserRoles } from './auth-types'
@@ -63,6 +65,9 @@ interface DeviceRow {
   metrics: unknown
   api_key: string
   created_at: string
+  billing_type: Device['billingType']
+  access_price: number
+  currency: string
 }
 
 interface TelemetryRow {
@@ -208,7 +213,10 @@ async function createTables(client: PoolClient): Promise<void> {
       heartbeat_interval INTEGER NOT NULL,
       metrics JSONB NOT NULL DEFAULT '[]'::jsonb,
       api_key TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      billing_type TEXT NOT NULL DEFAULT 'free' CHECK (billing_type IN ('free', 'one_time')),
+      access_price INTEGER NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'IDR'
     );
 
     CREATE TABLE IF NOT EXISTS telemetry (
@@ -227,8 +235,24 @@ async function createTables(client: PoolClient): Promise<void> {
       purpose TEXT NOT NULL,
       scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
       requested_until TEXT NOT NULL,
-      status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'revoked', 'cancelled')),
+      status TEXT NOT NULL CHECK (status IN ('pending', 'pending_payment', 'approved', 'rejected', 'revoked', 'cancelled')),
       created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS orders (
+      id TEXT PRIMARY KEY,
+      access_request_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      buyer_id TEXT NOT NULL,
+      seller_id TEXT NOT NULL,
+      total_amount INTEGER NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'IDR',
+      payment_method TEXT,
+      payment_status TEXT NOT NULL CHECK (payment_status IN ('PENDING', 'PAID', 'FAILED', 'EXPIRED')),
+      snap_token TEXT,
+      midtrans_order_id TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS access_grants (
@@ -261,6 +285,8 @@ async function createTables(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_telemetry_device_observed_at ON telemetry (device_id, observed_at DESC);
     CREATE INDEX IF NOT EXISTS idx_access_requests_device_id ON access_requests (device_id);
     CREATE INDEX IF NOT EXISTS idx_access_requests_developer_id ON access_requests (developer_id);
+    CREATE INDEX IF NOT EXISTS idx_orders_access_request_id ON orders (access_request_id);
+    CREATE INDEX IF NOT EXISTS idx_orders_midtrans_order_id ON orders (midtrans_order_id);
     CREATE INDEX IF NOT EXISTS idx_access_grants_device_id ON access_grants (device_id);
     CREATE INDEX IF NOT EXISTS idx_access_grants_developer_id ON access_grants (developer_id);
     CREATE INDEX IF NOT EXISTS idx_access_grants_token ON access_grants (token);
@@ -274,7 +300,42 @@ async function createTables(client: PoolClient): Promise<void> {
     UPDATE users
     SET roles = to_jsonb(ARRAY[role])
     WHERE roles = '[]'::jsonb;
+
+    ALTER TABLE devices
+      ADD COLUMN IF NOT EXISTS billing_type TEXT NOT NULL DEFAULT 'free',
+      ADD COLUMN IF NOT EXISTS access_price INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'IDR';
+
+    ALTER TABLE devices
+      DROP CONSTRAINT IF EXISTS devices_billing_type_check;
+
+    ALTER TABLE devices
+      ADD CONSTRAINT devices_billing_type_check
+      CHECK (billing_type IN ('free', 'one_time'));
+
+    ALTER TABLE access_requests
+      DROP CONSTRAINT IF EXISTS access_requests_status_check;
+
+    ALTER TABLE access_requests
+      ADD CONSTRAINT access_requests_status_check
+      CHECK (status IN ('pending', 'pending_payment', 'approved', 'rejected', 'revoked', 'cancelled'));
   `)
+}
+
+interface OrderRow {
+  id: string
+  access_request_id: string
+  device_id: string
+  buyer_id: string
+  seller_id: string
+  total_amount: number
+  currency: string
+  payment_method: string | null
+  payment_status: Order['paymentStatus']
+  snap_token: string | null
+  midtrans_order_id: string
+  created_at: string
+  updated_at: string
 }
 
 async function seedInitialData(client: PoolClient): Promise<void> {
@@ -285,8 +346,8 @@ async function seedInitialData(client: PoolClient): Promise<void> {
       await client.query(
         `INSERT INTO devices (
           id, name, type, location, description, owner_id, status, visibility,
-          last_seen, heartbeat_interval, metrics, api_key, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13)`,
+          last_seen, heartbeat_interval, metrics, api_key, created_at, billing_type, access_price, currency
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, $16)`,
         deviceParams(device)
       )
     }
@@ -320,6 +381,18 @@ async function seedInitialData(client: PoolClient): Promise<void> {
           id, device_id, developer_id, developer_name, scopes, expires_at, token, created_at
         ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)`,
         accessGrantParams(grant)
+      )
+    }
+  }
+
+  if (await isTableEmpty(client, 'orders')) {
+    for (const order of initialOrders) {
+      await client.query(
+        `INSERT INTO orders (
+          id, access_request_id, device_id, buyer_id, seller_id, total_amount, currency,
+          payment_method, payment_status, snap_token, midtrans_order_id, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        orderParams(order)
       )
     }
   }
@@ -422,6 +495,9 @@ function mapDevice(row: DeviceRow): Device {
     metrics: parseJsonArray<Device['metrics'][number]>(row.metrics),
     apiKey: row.api_key,
     createdAt: row.created_at,
+    billingType: row.billing_type || 'free',
+    accessPrice: Number(row.access_price || 0),
+    currency: row.currency || 'IDR',
   }
 }
 
@@ -491,6 +567,24 @@ function userParams(user: StoredUser): unknown[] {
   ]
 }
 
+function mapOrder(row: OrderRow): Order {
+  return {
+    id: row.id,
+    accessRequestId: row.access_request_id,
+    deviceId: row.device_id,
+    buyerId: row.buyer_id,
+    sellerId: row.seller_id,
+    totalAmount: row.total_amount,
+    currency: row.currency,
+    paymentMethod: row.payment_method || undefined,
+    paymentStatus: row.payment_status,
+    snapToken: row.snap_token || undefined,
+    midtransOrderId: row.midtrans_order_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
 function sessionParams(session: AuthSession): unknown[] {
   return [session.id, session.userId, session.tokenHash, new Date(session.createdAt), new Date(session.expiresAt)]
 }
@@ -510,6 +604,9 @@ function deviceParams(device: Device): unknown[] {
     JSON.stringify(device.metrics),
     device.apiKey,
     device.createdAt,
+    device.billingType || 'free',
+    Math.max(0, Math.round(Number(device.accessPrice || 0))),
+    device.currency || 'IDR',
   ]
 }
 
@@ -542,6 +639,24 @@ function accessGrantParams(grant: AccessGrant): unknown[] {
     grant.expiresAt,
     grant.token,
     grant.createdAt,
+  ]
+}
+
+function orderParams(order: Order): unknown[] {
+  return [
+    order.id,
+    order.accessRequestId,
+    order.deviceId,
+    order.buyerId,
+    order.sellerId,
+    Math.max(0, Math.round(Number(order.totalAmount || 0))),
+    order.currency || 'IDR',
+    order.paymentMethod || null,
+    order.paymentStatus,
+    order.snapToken || null,
+    order.midtransOrderId,
+    order.createdAt,
+    order.updatedAt,
   ]
 }
 
@@ -582,8 +697,8 @@ async function upsertDevice(device: Device): Promise<Device> {
   const rows = await query<DeviceRow>(
     `INSERT INTO devices (
        id, name, type, location, description, owner_id, status, visibility,
-       last_seen, heartbeat_interval, metrics, api_key, created_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
+       last_seen, heartbeat_interval, metrics, api_key, created_at, billing_type, access_price, currency
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, $16)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name,
        type = EXCLUDED.type,
@@ -596,7 +711,10 @@ async function upsertDevice(device: Device): Promise<Device> {
        heartbeat_interval = EXCLUDED.heartbeat_interval,
        metrics = EXCLUDED.metrics,
        api_key = EXCLUDED.api_key,
-       created_at = EXCLUDED.created_at
+       created_at = EXCLUDED.created_at,
+       billing_type = EXCLUDED.billing_type,
+       access_price = EXCLUDED.access_price,
+       currency = EXCLUDED.currency
      RETURNING *`,
     deviceParams(device)
   )
@@ -623,6 +741,31 @@ async function upsertAccessRequest(request: AccessRequest): Promise<AccessReques
     accessRequestParams(request)
   )
   return mapAccessRequest(rows[0])
+}
+
+async function upsertOrder(order: Order): Promise<Order> {
+  const rows = await query<OrderRow>(
+    `INSERT INTO orders (
+       id, access_request_id, device_id, buyer_id, seller_id, total_amount, currency,
+       payment_method, payment_status, snap_token, midtrans_order_id, created_at, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+     ON CONFLICT (id) DO UPDATE SET
+       access_request_id = EXCLUDED.access_request_id,
+       device_id = EXCLUDED.device_id,
+       buyer_id = EXCLUDED.buyer_id,
+       seller_id = EXCLUDED.seller_id,
+       total_amount = EXCLUDED.total_amount,
+       currency = EXCLUDED.currency,
+       payment_method = EXCLUDED.payment_method,
+       payment_status = EXCLUDED.payment_status,
+       snap_token = EXCLUDED.snap_token,
+       midtrans_order_id = EXCLUDED.midtrans_order_id,
+       created_at = EXCLUDED.created_at,
+       updated_at = EXCLUDED.updated_at
+     RETURNING *`,
+    orderParams(order)
+  )
+  return mapOrder(rows[0])
 }
 
 export class PostgresDataStore {
@@ -755,6 +898,36 @@ export class PostgresDataStore {
   static async revokeAccessGrant(id: string): Promise<boolean> {
     const rows = await query<{ id: string }>('DELETE FROM access_grants WHERE id = $1 RETURNING id', [id])
     return rows.length > 0
+  }
+
+  static async getAllOrders(): Promise<Order[]> {
+    const rows = await query<OrderRow>('SELECT * FROM orders ORDER BY created_at ASC, id ASC')
+    return rows.map(mapOrder)
+  }
+
+  static async getOrderById(id: string): Promise<Order | null> {
+    const rows = await query<OrderRow>('SELECT * FROM orders WHERE id = $1 LIMIT 1', [id])
+    return rows[0] ? mapOrder(rows[0]) : null
+  }
+
+  static async getOrderByMidtransOrderId(midtransOrderId: string): Promise<Order | null> {
+    const rows = await query<OrderRow>('SELECT * FROM orders WHERE midtrans_order_id = $1 LIMIT 1', [midtransOrderId])
+    return rows[0] ? mapOrder(rows[0]) : null
+  }
+
+  static async getOrderByAccessRequestId(accessRequestId: string): Promise<Order | null> {
+    const rows = await query<OrderRow>('SELECT * FROM orders WHERE access_request_id = $1 LIMIT 1', [accessRequestId])
+    return rows[0] ? mapOrder(rows[0]) : null
+  }
+
+  static async addOrder(order: Order): Promise<Order> {
+    return upsertOrder(order)
+  }
+
+  static async updateOrder(id: string, updates: Partial<Order>): Promise<Order | null> {
+    const current = await this.getOrderById(id)
+    if (!current) return null
+    return upsertOrder({ ...current, ...updates, updatedAt: updates.updatedAt || new Date().toISOString() })
   }
 
   static async getAllTelemetry(): Promise<TelemetryRecord[]> {

@@ -53,7 +53,9 @@ export function DeveloperDashboard() {
         setAllDevices(devices)
         setCatalogDevices(devices.filter((d) => d.visibility === 'catalog' && d.status !== 'archived'))
         setMyGrants(getLatestByDevice(grants.filter((grant) => grant.developerId === userId)))
-        const pending = requests.filter((r) => r.developerId === userId && r.status === 'pending')
+        const pending = requests.filter(
+          (r) => r.developerId === userId && (r.status === 'pending' || r.status === 'pending_payment')
+        )
         setMyPendingRequests(getLatestByDevice(pending))
       } catch (error) {
         console.error('Failed to load developer dashboard', error)
@@ -175,7 +177,9 @@ export function DeveloperDashboard() {
                         <p className="mt-1 text-xs text-muted-foreground">
                           Requested {formatDistanceToNow(new Date(request.createdAt), { addSuffix: true })}
                         </p>
-                        <StatusBadge status="pending" />
+                        <div className="mt-2">
+                          <StatusBadge status={request.status} />
+                        </div>
                       </div>
                     )
                   })}
