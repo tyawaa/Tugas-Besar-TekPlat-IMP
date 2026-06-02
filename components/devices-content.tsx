@@ -281,6 +281,7 @@ export function DevicesContent() {
                     <SelectItem value="online">Online</SelectItem>
                     <SelectItem value="offline">Offline</SelectItem>
                     <SelectItem value="suspended">Suspended</SelectItem>
+                    {isAdmin && <SelectItem value="archived">Archived</SelectItem>}
                   </SelectContent>
                 </Select>
               </div>

@@ -42,6 +42,7 @@ const menuItems = {
   admin: [
     { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
     { href: '/dashboard/devices', label: 'All Devices', icon: Cpu },
+    { href: '/dashboard/access-requests', label: 'Access Requests', icon: KeyRound },
     { href: '/dashboard/audit-logs', label: 'Audit Logs', icon: FileText },
     { href: '/dashboard/settings', label: 'Settings', icon: Settings },
   ],
