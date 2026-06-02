@@ -15,8 +15,8 @@ export async function GET(request: Request) {
   }
 
   const records = deviceId
-    ? ServerDataStore.getTelemetryHistory(deviceId, from, to)
-    : ServerDataStore.getAllTelemetry()
+    ? await ServerDataStore.getTelemetryHistory(deviceId, from, to)
+    : await ServerDataStore.getAllTelemetry()
 
   return NextResponse.json(records)
 }

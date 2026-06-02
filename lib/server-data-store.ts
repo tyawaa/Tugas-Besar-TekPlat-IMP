@@ -14,7 +14,10 @@ import {
   auditLogs as initialAuditLogs,
 } from './mock-data'
 
-const DATA_DIR = path.join(process.cwd(), 'data')
+const DATA_DIR =
+  process.env.IOTBRIDGE_DATA_DIR ||
+  (process.env.VERCEL ? path.join('/tmp', 'iotbridge-data') : path.join(process.cwd(), 'data'))
+
 const FILES = {
   devices: 'devices.json',
   accessRequests: 'accessRequests.json',
@@ -23,18 +26,28 @@ const FILES = {
   auditLogs: 'auditLogs.json',
 }
 
+const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN
+const REDIS_PREFIX = process.env.IOTBRIDGE_REDIS_PREFIX || 'iotbridge'
+
+type CollectionName = keyof typeof FILES
+
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true })
   }
 }
 
-function readJson<T>(filename: string, fallback: T): T {
+function cloneFallback<T>(fallback: T): T {
+  return JSON.parse(JSON.stringify(fallback)) as T
+}
+
+function readJsonFile<T>(filename: string, fallback: T): T {
   ensureDataDir()
   const filePath = path.join(DATA_DIR, filename)
   if (!fs.existsSync(filePath)) {
     fs.writeFileSync(filePath, JSON.stringify(fallback, null, 2), 'utf8')
-    return fallback
+    return cloneFallback(fallback)
   }
 
   try {
@@ -42,13 +55,79 @@ function readJson<T>(filename: string, fallback: T): T {
     return JSON.parse(raw) as T
   } catch {
     fs.writeFileSync(filePath, JSON.stringify(fallback, null, 2), 'utf8')
-    return fallback
+    return cloneFallback(fallback)
   }
 }
 
-function writeJson(filename: string, data: unknown) {
+function writeJsonFile(filename: string, data: unknown) {
   ensureDataDir()
   fs.writeFileSync(path.join(DATA_DIR, filename), JSON.stringify(data, null, 2), 'utf8')
+}
+
+function getRedisKey(collection: CollectionName): string {
+  return `${REDIS_PREFIX}:${collection}`
+}
+
+function isRedisConfigured(): boolean {
+  return Boolean(REDIS_URL && REDIS_TOKEN)
+}
+
+async function redisCommand<T>(command: unknown[]): Promise<T> {
+  if (!REDIS_URL || !REDIS_TOKEN) {
+    throw new Error('Redis is not configured.')
+  }
+
+  const response = await fetch(REDIS_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${REDIS_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(command),
+    cache: 'no-store',
+  })
+
+  if (!response.ok) {
+    throw new Error(`Redis command failed: ${response.status} ${response.statusText}`)
+  }
+
+  const body = (await response.json()) as { result?: T; error?: string }
+  if (body.error) {
+    throw new Error(`Redis command failed: ${body.error}`)
+  }
+
+  return body.result as T
+}
+
+async function readCollection<T>(collection: CollectionName, fallback: T): Promise<T> {
+  if (!isRedisConfigured()) {
+    return readJsonFile(FILES[collection], fallback)
+  }
+
+  const key = getRedisKey(collection)
+  const raw = await redisCommand<string | null>(['GET', key])
+  if (!raw) {
+    const initialValue = cloneFallback(fallback)
+    await redisCommand(['SET', key, JSON.stringify(initialValue)])
+    return initialValue
+  }
+
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    const initialValue = cloneFallback(fallback)
+    await redisCommand(['SET', key, JSON.stringify(initialValue)])
+    return initialValue
+  }
+}
+
+async function writeCollection(collection: CollectionName, data: unknown): Promise<void> {
+  if (!isRedisConfigured()) {
+    writeJsonFile(FILES[collection], data)
+    return
+  }
+
+  await redisCommand(['SET', getRedisKey(collection), JSON.stringify(data)])
 }
 
 function generateId(prefix: string): string {
@@ -56,154 +135,162 @@ function generateId(prefix: string): string {
 }
 
 export class ServerDataStore {
-  private static getDevicesFile() {
-    return readJson<Device[]>(FILES.devices, initialDevices)
+  private static getDevicesFile(): Promise<Device[]> {
+    return readCollection<Device[]>('devices', initialDevices)
   }
 
-  private static getAccessRequestsFile() {
-    return readJson<AccessRequest[]>(FILES.accessRequests, initialAccessRequests)
+  private static getAccessRequestsFile(): Promise<AccessRequest[]> {
+    return readCollection<AccessRequest[]>('accessRequests', initialAccessRequests)
   }
 
-  private static getAccessGrantsFile() {
-    return readJson<AccessGrant[]>(FILES.accessGrants, initialAccessGrants)
+  private static getAccessGrantsFile(): Promise<AccessGrant[]> {
+    return readCollection<AccessGrant[]>('accessGrants', initialAccessGrants)
   }
 
-  private static getTelemetryFile() {
-    return readJson<TelemetryRecord[]>(FILES.telemetry, initialTelemetryRecords)
+  private static getTelemetryFile(): Promise<TelemetryRecord[]> {
+    return readCollection<TelemetryRecord[]>('telemetry', initialTelemetryRecords)
   }
 
-  private static getAuditLogsFile() {
-    return readJson<AuditLog[]>(FILES.auditLogs, initialAuditLogs)
+  private static getAuditLogsFile(): Promise<AuditLog[]> {
+    return readCollection<AuditLog[]>('auditLogs', initialAuditLogs)
   }
 
   private static writeDevices(devices: Device[]) {
-    writeJson(FILES.devices, devices)
+    return writeCollection('devices', devices)
   }
 
   private static writeAccessRequests(requests: AccessRequest[]) {
-    writeJson(FILES.accessRequests, requests)
+    return writeCollection('accessRequests', requests)
   }
 
   private static writeAccessGrants(grants: AccessGrant[]) {
-    writeJson(FILES.accessGrants, grants)
+    return writeCollection('accessGrants', grants)
   }
 
   private static writeTelemetry(records: TelemetryRecord[]) {
-    writeJson(FILES.telemetry, records)
+    return writeCollection('telemetry', records)
   }
 
   private static writeAuditLogs(logs: AuditLog[]) {
-    writeJson(FILES.auditLogs, logs)
+    return writeCollection('auditLogs', logs)
   }
 
-  static getAllDevices(): Device[] {
+  static async getAllDevices(): Promise<Device[]> {
     return this.getDevicesFile()
   }
 
-  static getDeviceById(id: string): Device | null {
-    return this.getAllDevices().find(device => device.id === id) || null
+  static async getDeviceById(id: string): Promise<Device | null> {
+    const devices = await this.getAllDevices()
+    return devices.find(device => device.id === id) || null
   }
 
-  static addDevice(device: Device): Device {
-    const devices = this.getAllDevices()
+  static async addDevice(device: Device): Promise<Device> {
+    const devices = await this.getAllDevices()
     devices.push(device)
-    this.writeDevices(devices)
+    await this.writeDevices(devices)
     return device
   }
 
-  static updateDevice(id: string, updates: Partial<Device>): Device | null {
-    const devices = this.getAllDevices()
+  static async updateDevice(id: string, updates: Partial<Device>): Promise<Device | null> {
+    const devices = await this.getAllDevices()
     const index = devices.findIndex(device => device.id === id)
     if (index < 0) return null
     devices[index] = { ...devices[index], ...updates }
-    this.writeDevices(devices)
+    await this.writeDevices(devices)
     return devices[index]
   }
 
-  static getAllAccessRequests(): AccessRequest[] {
+  static async getAllAccessRequests(): Promise<AccessRequest[]> {
     return this.getAccessRequestsFile()
   }
 
-  static getAccessRequestById(id: string): AccessRequest | null {
-    return this.getAllAccessRequests().find(request => request.id === id) || null
+  static async getAccessRequestById(id: string): Promise<AccessRequest | null> {
+    const requests = await this.getAllAccessRequests()
+    return requests.find(request => request.id === id) || null
   }
 
-  static addAccessRequest(request: AccessRequest): AccessRequest {
-    const requests = this.getAllAccessRequests()
+  static async addAccessRequest(request: AccessRequest): Promise<AccessRequest> {
+    const requests = await this.getAllAccessRequests()
     requests.push(request)
-    this.writeAccessRequests(requests)
+    await this.writeAccessRequests(requests)
     return request
   }
 
-  static updateAccessRequest(id: string, updates: Partial<AccessRequest>): AccessRequest | null {
-    const requests = this.getAllAccessRequests()
+  static async updateAccessRequest(id: string, updates: Partial<AccessRequest>): Promise<AccessRequest | null> {
+    const requests = await this.getAllAccessRequests()
     const index = requests.findIndex(request => request.id === id)
     if (index < 0) return null
     requests[index] = { ...requests[index], ...updates }
-    this.writeAccessRequests(requests)
+    await this.writeAccessRequests(requests)
     return requests[index]
   }
 
-  static getAllAccessGrants(): AccessGrant[] {
+  static async getAllAccessGrants(): Promise<AccessGrant[]> {
     return this.getAccessGrantsFile()
   }
 
-  static addAccessGrant(grant: AccessGrant): AccessGrant {
-    const grants = this.getAllAccessGrants()
+  static async addAccessGrant(grant: AccessGrant): Promise<AccessGrant> {
+    const grants = await this.getAllAccessGrants()
     grants.push(grant)
-    this.writeAccessGrants(grants)
+    await this.writeAccessGrants(grants)
     return grant
   }
 
-  static revokeAccessGrant(id: string): boolean {
-    const grants = this.getAllAccessGrants()
+  static async revokeAccessGrant(id: string): Promise<boolean> {
+    const grants = await this.getAllAccessGrants()
     const filtered = grants.filter(grant => grant.id !== id)
     if (filtered.length === grants.length) return false
-    this.writeAccessGrants(filtered)
+    await this.writeAccessGrants(filtered)
     return true
   }
 
-  static getAllTelemetry(): TelemetryRecord[] {
+  static async getAllTelemetry(): Promise<TelemetryRecord[]> {
     return this.getTelemetryFile()
   }
 
-  static getTelemetryByDevice(deviceId: string): TelemetryRecord[] {
-    return this.getAllTelemetry().filter(record => record.deviceId === deviceId)
+  static async getTelemetryByDevice(deviceId: string): Promise<TelemetryRecord[]> {
+    const telemetry = await this.getAllTelemetry()
+    return telemetry
+      .filter(record => record.deviceId === deviceId)
+      .sort((a, b) => new Date(a.timestamp).valueOf() - new Date(b.timestamp).valueOf())
   }
 
-  static getLatestTelemetry(deviceId: string): TelemetryRecord | null {
-    const telemetry = this.getTelemetryByDevice(deviceId)
+  static async getLatestTelemetry(deviceId: string): Promise<TelemetryRecord | null> {
+    const telemetry = await this.getTelemetryByDevice(deviceId)
     return telemetry.sort((a, b) => new Date(b.timestamp).valueOf() - new Date(a.timestamp).valueOf())[0] ?? null
   }
 
-  static getTelemetryHistory(deviceId: string, from?: Date, to?: Date): TelemetryRecord[] {
-    return this.getTelemetryByDevice(deviceId).filter(record => {
-      const timestamp = new Date(record.timestamp)
-      if (from && timestamp < from) return false
-      if (to && timestamp > to) return false
-      return true
-    })
+  static async getTelemetryHistory(deviceId: string, from?: Date, to?: Date): Promise<TelemetryRecord[]> {
+    const telemetry = await this.getTelemetryByDevice(deviceId)
+    return telemetry
+      .filter(record => {
+        const timestamp = new Date(record.timestamp)
+        if (from && timestamp < from) return false
+        if (to && timestamp > to) return false
+        return true
+      })
+      .sort((a, b) => new Date(a.timestamp).valueOf() - new Date(b.timestamp).valueOf())
   }
 
-  static addTelemetry(record: TelemetryRecord): TelemetryRecord {
-    const telemetry = this.getAllTelemetry()
+  static async addTelemetry(record: TelemetryRecord): Promise<TelemetryRecord> {
+    const telemetry = await this.getAllTelemetry()
     telemetry.push(record)
-    this.writeTelemetry(telemetry)
+    await this.writeTelemetry(telemetry)
     return record
   }
 
-  static getAllAuditLogs(): AuditLog[] {
+  static async getAllAuditLogs(): Promise<AuditLog[]> {
     return this.getAuditLogsFile()
   }
 
-  static addAuditLog(log: AuditLog): AuditLog {
-    const logs = this.getAllAuditLogs()
+  static async addAuditLog(log: AuditLog): Promise<AuditLog> {
+    const logs = await this.getAllAuditLogs()
     logs.push(log)
-    this.writeAuditLogs(logs)
+    await this.writeAuditLogs(logs)
     return log
   }
 
-  static logAction(
+  static async logAction(
     actorId: string,
     actorName: string,
     actorRole: UserRole,
@@ -212,7 +299,7 @@ export class ServerDataStore {
     targetId: string,
     outcome: 'success' | 'failure' = 'success',
     details?: string
-  ): AuditLog {
+  ): Promise<AuditLog> {
     const log: AuditLog = {
       id: generateId('log'),
       timestamp: new Date().toISOString(),

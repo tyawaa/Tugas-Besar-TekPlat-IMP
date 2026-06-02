@@ -161,7 +161,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
     simulatorRef.current = setInterval(async () => {
       const telemetryPayload = generateRandomTelemetry(device.metrics)
       try {
-        await ingestTelemetry(deviceId, telemetryPayload)
+        await ingestTelemetry(deviceId, telemetryPayload, device.apiKey)
         setRefreshKey((prev) => prev + 1)
       } catch (error) {
         console.error('Failed to ingest telemetry', error)
@@ -184,7 +184,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
 
     const anomalyData = generateRandomTelemetry(device.metrics, true)
     try {
-      await ingestTelemetry(deviceId, anomalyData)
+      await ingestTelemetry(deviceId, anomalyData, device.apiKey)
       setRefreshKey((prev) => prev + 1)
     } catch (error) {
       console.error('Failed to ingest anomaly telemetry', error)

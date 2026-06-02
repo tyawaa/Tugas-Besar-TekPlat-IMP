@@ -105,10 +105,18 @@ export async function getTelemetryHistory(deviceId: string, from?: string, to?: 
   return fetchJson<TelemetryRecord[]>(url.toString())
 }
 
-export async function ingestTelemetry(deviceId: string, data: Record<string, number | boolean | string>): Promise<TelemetryRecord> {
+export async function ingestTelemetry(
+  deviceId: string,
+  data: Record<string, number | boolean | string>,
+  deviceApiKey?: string
+): Promise<TelemetryRecord> {
   return fetchJson<TelemetryRecord>(`${baseUrl}/ingestion/telemetry`, {
     method: 'POST',
-    body: JSON.stringify({ deviceId, data }),
+    headers: {
+      'X-Device-Id': deviceId,
+      ...(deviceApiKey ? { 'X-Device-Key': deviceApiKey } : {}),
+    },
+    body: JSON.stringify({ metrics: data }),
   })
 }
 

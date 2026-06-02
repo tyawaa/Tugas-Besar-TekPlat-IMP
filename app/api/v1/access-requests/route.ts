@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { ServerDataStore } from '@/lib/server-data-store'
 
 export async function GET() {
-  const requests = ServerDataStore.getAllAccessRequests()
+  const requests = await ServerDataStore.getAllAccessRequests()
   return NextResponse.json(requests)
 }
 
@@ -43,8 +43,8 @@ export async function POST(request: Request) {
     createdAt: new Date().toISOString(),
   }
 
-  ServerDataStore.addAccessRequest(requestItem)
-  ServerDataStore.logAction(developerId, developerName, 'developer', 'access.requested', 'access_request', requestItem.id)
+  await ServerDataStore.addAccessRequest(requestItem)
+  await ServerDataStore.logAction(developerId, developerName, 'developer', 'access.requested', 'access_request', requestItem.id)
 
   return NextResponse.json(requestItem, { status: 201 })
 }

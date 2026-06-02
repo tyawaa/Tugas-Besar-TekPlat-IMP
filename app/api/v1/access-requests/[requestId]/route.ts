@@ -6,7 +6,7 @@ export async function GET(
   { params }: { params: Promise<{ requestId: string }> }
 ) {
   const { requestId } = await params
-  const requestItem = ServerDataStore.getAccessRequestById(requestId)
+  const requestItem = await ServerDataStore.getAccessRequestById(requestId)
   if (!requestItem) {
     return NextResponse.json({ error: 'Access request not found' }, { status: 404 })
   }
@@ -25,7 +25,7 @@ export async function POST(
     return NextResponse.json({ error: 'Missing action or actor details' }, { status: 400 })
   }
 
-  const requestItem = ServerDataStore.getAccessRequestById(requestId)
+  const requestItem = await ServerDataStore.getAccessRequestById(requestId)
   if (!requestItem) {
     return NextResponse.json({ error: 'Access request not found' }, { status: 404 })
   }
@@ -37,7 +37,7 @@ export async function POST(
   let result: { request: typeof requestItem; grant?: any } = { request: requestItem }
 
   if (action === 'approve') {
-    const updatedRequest = ServerDataStore.updateAccessRequest(requestId, { status: 'approved' })
+    const updatedRequest = await ServerDataStore.updateAccessRequest(requestId, { status: 'approved' })
     if (!updatedRequest) {
       return NextResponse.json({ error: 'Failed to update access request' }, { status: 500 })
     }
@@ -53,16 +53,16 @@ export async function POST(
       createdAt: new Date().toISOString(),
     }
 
-    ServerDataStore.addAccessGrant(grant)
-    ServerDataStore.logAction(actorId, actorName, actorRole, 'access.approved', 'access_request', requestId)
+    await ServerDataStore.addAccessGrant(grant)
+    await ServerDataStore.logAction(actorId, actorName, actorRole, 'access.approved', 'access_request', requestId)
 
     result = { request: updatedRequest, grant }
   } else if (action === 'reject') {
-    const updatedRequest = ServerDataStore.updateAccessRequest(requestId, { status: 'rejected' })
+    const updatedRequest = await ServerDataStore.updateAccessRequest(requestId, { status: 'rejected' })
     if (!updatedRequest) {
       return NextResponse.json({ error: 'Failed to update access request' }, { status: 500 })
     }
-    ServerDataStore.logAction(actorId, actorName, actorRole, 'access.rejected', 'access_request', requestId)
+    await ServerDataStore.logAction(actorId, actorName, actorRole, 'access.rejected', 'access_request', requestId)
     result = { request: updatedRequest }
   } else {
     return NextResponse.json({ error: 'Unsupported action' }, { status: 400 })

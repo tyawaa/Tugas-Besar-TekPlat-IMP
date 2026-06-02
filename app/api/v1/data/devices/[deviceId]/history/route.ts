@@ -21,6 +21,6 @@ export async function GET(
     return NextResponse.json({ error: 'Invalid to query parameter' }, { status: 400 })
   }
 
-  const history = ServerDataStore.getTelemetryHistory(deviceId, fromDate, toDate)
+  const history = await ServerDataStore.getTelemetryHistory(deviceId, fromDate, toDate)
   return NextResponse.json(history)
 }

@@ -6,7 +6,7 @@ export async function GET(
   { params }: { params: Promise<{ deviceId: string }> }
 ) {
   const { deviceId } = await params
-  const telemetry = ServerDataStore.getLatestTelemetry(deviceId)
+  const telemetry = await ServerDataStore.getLatestTelemetry(deviceId)
 
   if (!telemetry) {
     return NextResponse.json({ error: 'Telemetry not found for device.' }, { status: 404 })

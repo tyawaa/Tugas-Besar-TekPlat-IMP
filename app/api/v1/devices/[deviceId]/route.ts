@@ -6,7 +6,7 @@ export async function GET(
   { params }: { params: Promise<{ deviceId: string }> }
 ) {
   const { deviceId } = await params
-  const device = ServerDataStore.getDeviceById(deviceId)
+  const device = await ServerDataStore.getDeviceById(deviceId)
   if (!device) {
     return NextResponse.json({ error: 'Device not found' }, { status: 404 })
   }
@@ -25,7 +25,7 @@ export async function PATCH(
     return NextResponse.json({ error: 'Missing action or actor details' }, { status: 400 })
   }
 
-  const device = ServerDataStore.getDeviceById(deviceId)
+  const device = await ServerDataStore.getDeviceById(deviceId)
   if (!device) {
     return NextResponse.json({ error: 'Device not found' }, { status: 404 })
   }
@@ -34,21 +34,21 @@ export async function PATCH(
 
   switch (action) {
     case 'suspend':
-      updatedDevice = ServerDataStore.updateDevice(deviceId, { status: 'suspended' })
-      ServerDataStore.logAction(actorId, actorName, actorRole, 'device.suspended', 'device', deviceId)
+      updatedDevice = await ServerDataStore.updateDevice(deviceId, { status: 'suspended' })
+      await ServerDataStore.logAction(actorId, actorName, actorRole, 'device.suspended', 'device', deviceId)
       break
     case 'reinstate':
-      updatedDevice = ServerDataStore.updateDevice(deviceId, { status: 'online' })
-      ServerDataStore.logAction(actorId, actorName, actorRole, 'device.reinstated', 'device', deviceId)
+      updatedDevice = await ServerDataStore.updateDevice(deviceId, { status: 'online' })
+      await ServerDataStore.logAction(actorId, actorName, actorRole, 'device.reinstated', 'device', deviceId)
       break
     case 'archive':
-      updatedDevice = ServerDataStore.updateDevice(deviceId, { status: 'archived' })
-      ServerDataStore.logAction(actorId, actorName, actorRole, 'device.archived', 'device', deviceId)
+      updatedDevice = await ServerDataStore.updateDevice(deviceId, { status: 'archived' })
+      await ServerDataStore.logAction(actorId, actorName, actorRole, 'device.archived', 'device', deviceId)
       break
     case 'rotateKey': {
       const apiKey = `iot_key_${Math.random().toString(36).substring(2, 22).toUpperCase()}`
-      updatedDevice = ServerDataStore.updateDevice(deviceId, { apiKey })
-      ServerDataStore.logAction(actorId, actorName, actorRole, 'device.api_key_rotated', 'device', deviceId)
+      updatedDevice = await ServerDataStore.updateDevice(deviceId, { apiKey })
+      await ServerDataStore.logAction(actorId, actorName, actorRole, 'device.api_key_rotated', 'device', deviceId)
       break
     }
     default:
