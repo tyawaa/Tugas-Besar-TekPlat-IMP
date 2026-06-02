@@ -98,7 +98,7 @@ export function KPICard({ title, value, icon, trend, className }: KPICardProps) 
 }
 
 interface StatusBadgeProps {
-  status: 'online' | 'offline' | 'suspended' | 'archived' | 'pending' | 'approved' | 'rejected' | 'revoked'
+  status: 'online' | 'offline' | 'suspended' | 'archived' | 'pending' | 'approved' | 'rejected' | 'revoked' | 'cancelled'
 }
 
 export function StatusBadge({ status }: StatusBadgeProps) {
@@ -111,6 +111,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
     approved: 'bg-green-50 text-green-700 border-green-200',
     rejected: 'bg-red-50 text-red-700 border-red-200',
     revoked: 'bg-slate-100 text-slate-600 border-slate-200',
+    cancelled: 'bg-slate-100 text-slate-600 border-slate-200',
   }
 
   return (

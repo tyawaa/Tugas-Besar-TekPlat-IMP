@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { DashboardLayout, StatusBadge } from '@/components/layout/dashboard-layout'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -30,39 +31,47 @@ import {
   Filter,
   CheckCircle,
 } from 'lucide-react'
-import { Device, deviceHealth } from '@/lib/mock-data'
+import { AccessGrant, AccessRequest, Device, deviceHealth } from '@/lib/mock-data'
 import { useAuth } from '@/lib/auth-context'
 import { formatDistanceToNow } from 'date-fns'
 import { HealthBadge } from '@/components/devices/health-badge'
-import { createAccessRequest, getDevices } from '@/lib/api'
+import { cancelAccessRequest, createAccessRequest, getAccessGrants, getAccessRequests, getDevices } from '@/lib/api'
 
 export default function CatalogPage() {
   const { userId } = useAuth()
   const [catalogDevices, setCatalogDevices] = useState<Device[]>([])
+  const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([])
+  const [accessGrants, setAccessGrants] = useState<AccessGrant[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null)
   const [showRequestModal, setShowRequestModal] = useState(false)
   const [requestSubmitted, setRequestSubmitted] = useState(false)
+  const [updatingDeviceId, setUpdatingDeviceId] = useState<string | null>(null)
   const [purpose, setPurpose] = useState('')
   const [requestedUntil, setRequestedUntil] = useState('')
 
-  // Load catalog devices from API
   useEffect(() => {
-    const loadCatalogDevices = async () => {
+    if (!userId) return
+
+    const loadCatalogData = async () => {
       try {
-        const allDevices = await getDevices()
-        const filtered = allDevices.filter(
-          d => d.visibility === 'catalog' && d.status !== 'archived'
-        )
-        setCatalogDevices(filtered)
+        const [allDevices, requests, grants] = await Promise.all([
+          getDevices(),
+          getAccessRequests(),
+          getAccessGrants(),
+        ])
+        setCatalogDevices(allDevices.filter(d => d.visibility === 'catalog' && d.status !== 'archived'))
+        setAccessRequests(requests.filter(request => request.developerId === userId))
+        setAccessGrants(grants.filter(grant => grant.developerId === userId))
       } catch (error) {
-        console.error('Failed to load catalog devices', error)
+        console.error('Failed to load catalog data', error)
       }
     }
-    loadCatalogDevices()
-  }, [])
+
+    loadCatalogData()
+  }, [userId])
 
   const filteredDevices = catalogDevices.filter((device) => {
     const matchesSearch =
@@ -72,6 +81,29 @@ export default function CatalogPage() {
     const matchesStatus = statusFilter === 'all' || device.status === statusFilter
     return matchesSearch && matchesType && matchesStatus
   })
+
+  const requestByDevice = useMemo(() => {
+    const grouped = new Map<string, AccessRequest[]>()
+    accessRequests
+      .filter(request => request.status === 'pending')
+      .forEach(request => {
+        grouped.set(request.deviceId, [...(grouped.get(request.deviceId) || []), request])
+      })
+    return grouped
+  }, [accessRequests])
+
+  const activeGrantByDevice = useMemo(() => {
+    const active = new Map<string, AccessGrant>()
+    accessGrants
+      .filter(grant => new Date(grant.expiresAt) >= new Date())
+      .forEach(grant => {
+        const existing = active.get(grant.deviceId)
+        if (!existing || new Date(grant.createdAt) > new Date(existing.createdAt)) {
+          active.set(grant.deviceId, grant)
+        }
+      })
+    return active
+  }, [accessGrants])
 
   const handleRequestAccess = (device: Device) => {
     setSelectedDevice(device)
@@ -85,38 +117,57 @@ export default function CatalogPage() {
     if (!selectedDevice || !userId) return
 
     try {
-      await createAccessRequest({
+      setUpdatingDeviceId(selectedDevice.id)
+      const request = await createAccessRequest({
         deviceId: selectedDevice.id,
         purpose: purpose || 'Access to device telemetry data',
         scopes: ['telemetry:read'],
         requestedUntil:
           requestedUntil || new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       })
+      setAccessRequests(current => [...current, request])
       setRequestSubmitted(true)
     } catch (error) {
       console.error('Failed to submit access request', error)
+    } finally {
+      setUpdatingDeviceId(null)
+    }
+  }
+
+  const handleCancelRequest = async (device: Device) => {
+    const pendingRequests = requestByDevice.get(device.id) || []
+    if (pendingRequests.length === 0) return
+
+    try {
+      setUpdatingDeviceId(device.id)
+      const results = await Promise.all(pendingRequests.map(request => cancelAccessRequest(request.id)))
+      const cancelledById = new Map(results.map(result => [result.request.id, result.request]))
+      setAccessRequests(current => current.map(request => cancelledById.get(request.id) || request))
+    } catch (error) {
+      console.error('Failed to cancel access request', error)
+    } finally {
+      setUpdatingDeviceId(null)
     }
   }
 
   const getDeviceHealth = (deviceId: string) => {
-  return (
-    deviceHealth.find((h) => h.deviceId === deviceId) || {
-      deviceId,
-      score: 90,
-      uptime: 100,
-      ingestionErrors: 0,
-      dataQuality: 'good',
-      activeGrants: 0,
-    }
-  )
-}
+    return (
+      deviceHealth.find((h) => h.deviceId === deviceId) || {
+        deviceId,
+        score: 90,
+        uptime: 100,
+        ingestionErrors: 0,
+        dataQuality: 'good',
+        activeGrants: 0,
+      }
+    )
+  }
 
   const deviceTypes = [...new Set(catalogDevices.map((d) => d.type))]
 
   return (
     <DashboardLayout title="Device Catalog">
       <div className="space-y-6">
-        {/* Search and Filters */}
         <Card>
           <CardContent className="p-4">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
@@ -159,58 +210,81 @@ export default function CatalogPage() {
           </CardContent>
         </Card>
 
-        {/* Device Grid */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredDevices.map((device) => (
-            <Card key={device.id} className="overflow-hidden">
-              <CardContent className="p-0">
-                <div className="p-5">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="font-semibold text-foreground">{device.name}</h3>
-                      <p className="text-sm text-muted-foreground">{device.type}</p>
-                    </div>
-                    <StatusBadge status={device.status} />
-                  </div>
+          {filteredDevices.map((device) => {
+            const pendingRequests = requestByDevice.get(device.id) || []
+            const activeGrant = activeGrantByDevice.get(device.id)
+            const isUpdating = updatingDeviceId === device.id
 
-                  <div className="mt-4 space-y-2">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <MapPin className="h-4 w-4" />
-                      {device.location}
+            return (
+              <Card key={device.id} className="overflow-hidden">
+                <CardContent className="p-0">
+                  <div className="p-5">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h3 className="font-semibold text-foreground">{device.name}</h3>
+                        <p className="text-sm text-muted-foreground">{device.type}</p>
+                      </div>
+                      <StatusBadge status={device.status} />
                     </div>
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Clock className="h-4 w-4" />
-                      Last seen {formatDistanceToNow(new Date(device.lastSeen), { addSuffix: true })}
-                    </div>
-                  </div>
 
-                  <div className="mt-4">
-                    <p className="text-xs font-medium text-muted-foreground mb-2">Available Metrics</p>
-                    <div className="flex flex-wrap gap-1">
-                      {device.metrics.map((metric) => (
-                        <Badge key={metric.key} variant="secondary" className="text-xs">
-                          {metric.label}
-                        </Badge>
-                      ))}
+                    <div className="mt-4 space-y-2">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <MapPin className="h-4 w-4" />
+                        {device.location}
+                      </div>
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Clock className="h-4 w-4" />
+                        Last seen {formatDistanceToNow(new Date(device.lastSeen), { addSuffix: true })}
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <p className="text-xs font-medium text-muted-foreground mb-2">Available Metrics</p>
+                      <div className="flex flex-wrap gap-1">
+                        {device.metrics.map((metric) => (
+                          <Badge key={metric.key} variant="secondary" className="text-xs">
+                            {metric.label}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 pt-4 border-t border-border">
+                      <p className="text-xs font-medium text-muted-foreground mb-2">Health</p>
+                      <HealthBadge score={getDeviceHealth(device.id).score} compact />
                     </div>
                   </div>
-
-                  <div className="mt-4 pt-4 border-t border-border">
-                    <p className="text-xs font-medium text-muted-foreground mb-2">Health</p>
-                    <HealthBadge score={getDeviceHealth(device.id).score} compact />
+                  <div className="border-t border-border p-4">
+                    {activeGrant ? (
+                      <Button asChild className="w-full bg-primary hover:bg-primary/90">
+                        <Link href={`/dashboard/data-explorer?device=${activeGrant.deviceId}`}>
+                          View Data
+                        </Link>
+                      </Button>
+                    ) : pendingRequests.length > 0 ? (
+                      <Button
+                        variant="destructive"
+                        onClick={() => handleCancelRequest(device)}
+                        disabled={isUpdating}
+                        className="w-full"
+                      >
+                        {isUpdating ? 'Cancelling...' : 'Cancel Request'}
+                      </Button>
+                    ) : (
+                      <Button
+                        onClick={() => handleRequestAccess(device)}
+                        disabled={isUpdating}
+                        className="w-full bg-primary hover:bg-primary/90"
+                      >
+                        {isUpdating ? 'Submitting...' : 'Request Access'}
+                      </Button>
+                    )}
                   </div>
-                </div>
-                <div className="border-t border-border p-4">
-                  <Button
-                    onClick={() => handleRequestAccess(device)}
-                    className="w-full bg-primary hover:bg-primary/90"
-                  >
-                    Request Access
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            )
+          })}
         </div>
 
         {filteredDevices.length === 0 && (
@@ -220,7 +294,6 @@ export default function CatalogPage() {
         )}
       </div>
 
-      {/* Request Access Modal */}
       <Dialog open={showRequestModal} onOpenChange={setShowRequestModal}>
         <DialogContent className="sm:max-w-[500px]">
           {requestSubmitted ? (
@@ -276,9 +349,9 @@ export default function CatalogPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="until">Access Until</Label>
-                  <Input 
-                    id="until" 
-                    type="date" 
+                  <Input
+                    id="until"
+                    type="date"
                     value={requestedUntil}
                     onChange={(e) => setRequestedUntil(e.target.value)}
                   />
@@ -288,8 +361,8 @@ export default function CatalogPage() {
                 <Button variant="outline" onClick={() => setShowRequestModal(false)}>
                   Cancel
                 </Button>
-                <Button onClick={handleSubmitRequest} className="bg-primary hover:bg-primary/90">
-                  Submit Request
+                <Button onClick={handleSubmitRequest} disabled={Boolean(updatingDeviceId)} className="bg-primary hover:bg-primary/90">
+                  {updatingDeviceId ? 'Submitting...' : 'Submit Request'}
                 </Button>
               </DialogFooter>
             </>

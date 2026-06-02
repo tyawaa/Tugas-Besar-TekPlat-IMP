@@ -133,6 +133,13 @@ export async function actionAccessRequest(
   })
 }
 
+export async function cancelAccessRequest(requestId: string): Promise<{ request: AccessRequest }> {
+  return fetchJson<{ request: AccessRequest }>(`${baseUrl}/access-requests/${requestId}`, {
+    method: 'POST',
+    body: JSON.stringify({ action: 'cancel' }),
+  })
+}
+
 export async function getAccessGrants(): Promise<AccessGrant[]> {
   return fetchJson<AccessGrant[]>(`${baseUrl}/access-grants`)
 }

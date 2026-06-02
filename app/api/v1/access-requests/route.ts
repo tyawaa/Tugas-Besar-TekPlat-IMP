@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { ServerDataStore } from '@/lib/server-data-store'
 import { requireCurrentUser } from '@/lib/auth-server'
+import { isGrantActive } from '@/lib/access-control'
 
 export async function GET(request: Request) {
   const currentUser = await requireCurrentUser(request)
@@ -41,6 +42,28 @@ export async function POST(request: Request) {
     !requestedUntil
   ) {
     return NextResponse.json({ error: 'Missing required fields to create access request.' }, { status: 400 })
+  }
+
+  const requests = await ServerDataStore.getAllAccessRequests()
+  const hasPendingRequest = requests.some(request =>
+    request.deviceId === deviceId &&
+    request.developerId === currentUser.id &&
+    request.status === 'pending'
+  )
+
+  if (hasPendingRequest) {
+    return NextResponse.json({ error: 'You already have a pending request for this device.' }, { status: 409 })
+  }
+
+  const grants = await ServerDataStore.getAllAccessGrants()
+  const hasActiveGrant = grants.some(grant =>
+    grant.deviceId === deviceId &&
+    grant.developerId === currentUser.id &&
+    isGrantActive(grant)
+  )
+
+  if (hasActiveGrant) {
+    return NextResponse.json({ error: 'You already have active access to this device.' }, { status: 409 })
   }
 
   const requestItem = {

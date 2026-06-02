@@ -51,6 +51,20 @@ export async function POST(
     return NextResponse.json({ error: 'Access request is not pending' }, { status: 400 })
   }
 
+  if (action === 'cancel') {
+    if (currentUser.role !== 'developer' || requestItem.developerId !== currentUser.id) {
+      return NextResponse.json({ error: 'Only the requesting developer can cancel this request.' }, { status: 403 })
+    }
+
+    const updatedRequest = await ServerDataStore.updateAccessRequest(requestId, { status: 'cancelled' })
+    if (!updatedRequest) {
+      return NextResponse.json({ error: 'Failed to cancel access request' }, { status: 500 })
+    }
+
+    await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'access.cancelled', 'access_request', requestId)
+    return NextResponse.json({ request: updatedRequest })
+  }
+
   const device = await ServerDataStore.getDeviceById(requestItem.deviceId)
   if (!device) {
     return NextResponse.json({ error: 'Device not found' }, { status: 404 })

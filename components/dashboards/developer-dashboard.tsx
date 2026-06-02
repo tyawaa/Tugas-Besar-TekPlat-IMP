@@ -18,6 +18,19 @@ import { getDevices, getAccessGrants, getAccessRequests } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { formatDistanceToNow } from 'date-fns'
 
+function getLatestByDevice<T extends { deviceId: string; createdAt: string }>(items: T[]): T[] {
+  const latestByDevice = new Map<string, T>()
+
+  items.forEach(item => {
+    const existing = latestByDevice.get(item.deviceId)
+    if (!existing || new Date(item.createdAt) > new Date(existing.createdAt)) {
+      latestByDevice.set(item.deviceId, item)
+    }
+  })
+
+  return Array.from(latestByDevice.values())
+}
+
 export function DeveloperDashboard() {
   const { userId } = useAuth()
   const [catalogDevices, setCatalogDevices] = useState<Device[]>([])
@@ -39,9 +52,9 @@ export function DeveloperDashboard() {
 
         setAllDevices(devices)
         setCatalogDevices(devices.filter((d) => d.visibility === 'catalog' && d.status !== 'archived'))
-        setMyGrants(grants.filter((grant) => grant.developerId === userId))
+        setMyGrants(getLatestByDevice(grants.filter((grant) => grant.developerId === userId)))
         const pending = requests.filter((r) => r.developerId === userId && r.status === 'pending')
-        setMyPendingRequests(pending)
+        setMyPendingRequests(getLatestByDevice(pending))
       } catch (error) {
         console.error('Failed to load developer dashboard', error)
       }

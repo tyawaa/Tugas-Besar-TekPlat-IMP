@@ -50,7 +50,7 @@ export interface AccessRequest {
   purpose: string
   scopes: string[]
   requestedUntil: string
-  status: 'pending' | 'approved' | 'rejected' | 'revoked'
+  status: 'pending' | 'approved' | 'rejected' | 'revoked' | 'cancelled'
   createdAt: string
 }
 
