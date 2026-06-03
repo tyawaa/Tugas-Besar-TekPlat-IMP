@@ -214,6 +214,20 @@ export async function getAccessGrants(): Promise<AccessGrant[]> {
   return fetchJson<AccessGrant[]>(`${baseUrl}/access-grants`)
 }
 
+export async function getOrders(): Promise<Order[]> {
+  return fetchJson<Order[]>(`${baseUrl}/orders`)
+}
+
+export async function updateOrderPayoutAction(
+  orderId: string,
+  action: 'markPaidOut' | 'markRefunded'
+): Promise<{ order: Order }> {
+  return fetchJson<{ order: Order }>(`${baseUrl}/orders/${orderId}`, {
+    method: 'POST',
+    body: JSON.stringify({ action }),
+  })
+}
+
 export async function createMidtransPaymentToken(payload: {
   orderId: string
   totalAmount: number

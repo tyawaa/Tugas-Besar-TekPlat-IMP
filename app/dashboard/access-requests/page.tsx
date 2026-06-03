@@ -13,13 +13,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { AccessRequest, AccessGrant, Device } from '@/lib/mock-data'
+import { AccessRequest, AccessGrant, Device, Order } from '@/lib/mock-data'
 import { useAuth } from '@/lib/auth-context'
-import { getAccessRequests, getAccessGrants, getDevices, actionAccessRequest, revokeAccessGrant } from '@/lib/api'
+import { getAccessRequests, getAccessGrants, getDevices, actionAccessRequest, revokeAccessGrant, getOrders, updateOrderPayoutAction } from '@/lib/api'
 import { StatusBadge, KPICard } from '@/components/layout/dashboard-layout'
 import { DashboardLayout } from '@/components/layout/dashboard-layout'
 import { format } from 'date-fns'
-import { CheckCircle2, XCircle, Clock, Eye, Ban } from 'lucide-react'
+import { CheckCircle2, XCircle, Clock, Eye, Wallet } from 'lucide-react'
 
 export default function AccessRequestsPage() {
   const { userId, userName, userRole } = useAuth()
@@ -28,6 +28,7 @@ export default function AccessRequestsPage() {
   const [requests, setRequests] = useState<AccessRequest[]>([])
   const [grants, setGrants] = useState<AccessGrant[]>([])
   const [devices, setDevices] = useState<Device[]>([])
+  const [orders, setOrders] = useState<Order[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
 
   // Load data from API
@@ -39,15 +40,18 @@ export default function AccessRequestsPage() {
 
         const allRequests = await getAccessRequests()
         const allGrants = await getAccessGrants()
+        const allOrders = await getOrders()
 
         if (userRole === 'device_owner' && userId) {
           const ownerDevices = allDevices.filter(d => d.ownerId === userId)
           const ownerDeviceIds = ownerDevices.map(d => d.id)
           setRequests(allRequests.filter(ar => ownerDeviceIds.includes(ar.deviceId)))
           setGrants(allGrants.filter(g => ownerDeviceIds.includes(g.deviceId)))
+          setOrders(allOrders)
         } else if (userRole === 'admin') {
           setRequests(allRequests)
           setGrants(allGrants)
+          setOrders(allOrders)
         }
       } catch (error) {
         console.error('Failed to load access requests', error)
@@ -60,11 +64,19 @@ export default function AccessRequestsPage() {
   const pendingPaymentCount = requests.filter(ar => ar.status === 'pending_payment').length
   const approvedCount = requests.filter(ar => ar.status === 'approved').length
   const rejectedCount = requests.filter(ar => ar.status === 'rejected').length
-  const revokedCount = requests.filter(ar => ar.status === 'revoked').length
+  const payoutEligibleAmount = orders
+    .filter(order => order.payoutStatus === 'ELIGIBLE')
+    .reduce((sum, order) => sum + order.ownerAmount, 0)
 
   const filteredRequests = filter === 'all' 
     ? requests 
     : requests.filter(ar => ar.status === filter)
+
+  const paidOrders = orders.filter(order =>
+    order.paymentStatus === 'PAID' ||
+    order.payoutStatus === 'REFUND_REQUIRED' ||
+    order.payoutStatus === 'REFUNDED'
+  )
 
   const handleApprove = async (id: string) => {
     if (!userId || !userName || !userRole) return
@@ -98,9 +110,55 @@ export default function AccessRequestsPage() {
     }
   }
 
+  const handleMarkPaidOut = async (orderId: string) => {
+    try {
+      await updateOrderPayoutAction(orderId, 'markPaidOut')
+      setRefreshKey(prev => prev + 1)
+    } catch (error) {
+      console.error('Failed to mark payout as paid out', error)
+    }
+  }
+
+  const handleMarkRefunded = async (orderId: string) => {
+    try {
+      await updateOrderPayoutAction(orderId, 'markRefunded')
+      setRefreshKey(prev => prev + 1)
+    } catch (error) {
+      console.error('Failed to mark payout as refunded', error)
+    }
+  }
+
   const getDeviceName = (deviceId: string) => {
     const device = devices.find(d => d.id === deviceId)
     return device?.name || deviceId
+  }
+
+  const getRequestForOrder = (order: Order): AccessRequest | undefined => {
+    return requests.find(request => request.id === order.accessRequestId)
+  }
+
+  const formatCurrencyAmount = (currency: string, amount: number): string => {
+    return `${currency} ${Number(amount || 0).toLocaleString('id-ID')}`
+  }
+
+  const formatOrderCurrency = (order: Order, amount: number): string => {
+    return formatCurrencyAmount(order.currency || 'IDR', amount)
+  }
+
+  const getPayoutStatusLabel = (status: Order['payoutStatus']): string => {
+    if (status === 'ELIGIBLE') return 'Ready for payout'
+    if (status === 'PAID_OUT') return 'Paid out'
+    if (status === 'REFUND_REQUIRED') return 'Refund required'
+    if (status === 'REFUNDED') return 'Refunded'
+    return 'Awaiting approval'
+  }
+
+  const getPayoutStatusClassName = (status: Order['payoutStatus']): string => {
+    if (status === 'ELIGIBLE') return 'border-amber-200 bg-amber-50 text-amber-800'
+    if (status === 'PAID_OUT') return 'border-green-200 bg-green-50 text-green-700'
+    if (status === 'REFUND_REQUIRED') return 'border-red-200 bg-red-50 text-red-700'
+    if (status === 'REFUNDED') return 'border-slate-200 bg-slate-50 text-slate-700'
+    return 'border-blue-200 bg-blue-50 text-blue-700'
   }
 
   const getGrantForRequest = (request: AccessRequest): AccessGrant | undefined => {
@@ -116,7 +174,7 @@ export default function AccessRequestsPage() {
         <KPICard title="Pending Payments" value={pendingPaymentCount} icon={<Clock className="h-5 w-5" />} />
         <KPICard title="Approved Grants" value={approvedCount} icon={<CheckCircle2 className="h-5 w-5" />} />
         <KPICard title="Rejected Requests" value={rejectedCount} icon={<XCircle className="h-5 w-5" />} />
-        <KPICard title="Revoked" value={revokedCount} icon={<Ban className="h-5 w-5" />} />
+        <KPICard title="Ready Payout" value={formatCurrencyAmount('IDR', payoutEligibleAmount)} icon={<Wallet className="h-5 w-5" />} />
       </div>
 
       {/* Tabs */}
@@ -246,6 +304,94 @@ export default function AccessRequestsPage() {
               </div>
             </TabsContent>
           </Tabs>
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Payout Tracking</CardTitle>
+          <CardDescription>
+            Paid access orders are held by the platform until owner approval makes them eligible for payout.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-lg border border-border overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-slate-50">
+                  <TableHead>Order</TableHead>
+                  <TableHead>Device</TableHead>
+                  <TableHead>Developer</TableHead>
+                  <TableHead>Payment</TableHead>
+                  <TableHead>Owner Amount</TableHead>
+                  <TableHead>Payout Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paidOrders.length > 0 ? (
+                  paidOrders.map((order) => {
+                    const requestItem = getRequestForOrder(order)
+                    return (
+                      <TableRow key={order.id} className="hover:bg-slate-50">
+                        <TableCell>
+                          <div>
+                            <div className="font-medium">{order.id}</div>
+                            <div className="text-xs text-muted-foreground">{order.midtransOrderId}</div>
+                          </div>
+                        </TableCell>
+                        <TableCell>{getDeviceName(order.deviceId)}</TableCell>
+                        <TableCell>
+                          <div>
+                            <div className="font-medium">{requestItem?.developerName || order.buyerId}</div>
+                            <div className="text-xs text-muted-foreground">{requestItem?.developerEmail || 'Unknown email'}</div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <div className="font-medium">{formatOrderCurrency(order, order.totalAmount)}</div>
+                            <div className="text-xs text-muted-foreground">Platform fee {formatOrderCurrency(order, order.platformFee)}</div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-medium">{formatOrderCurrency(order, order.ownerAmount)}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={getPayoutStatusClassName(order.payoutStatus)}>
+                            {getPayoutStatusLabel(order.payoutStatus)}
+                          </Badge>
+                          {order.paidOutAt && (
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {format(new Date(order.paidOutAt), 'MMM d, yyyy')}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {userRole === 'admin' && order.payoutStatus === 'ELIGIBLE' && (
+                            <Button size="sm" variant="outline" onClick={() => handleMarkPaidOut(order.id)}>
+                              Mark Paid Out
+                            </Button>
+                          )}
+                          {userRole === 'admin' && order.payoutStatus === 'REFUND_REQUIRED' && (
+                            <Button size="sm" variant="outline" onClick={() => handleMarkRefunded(order.id)}>
+                              Mark Refunded
+                            </Button>
+                          )}
+                          {userRole !== 'admin' && order.payoutStatus === 'ELIGIBLE' && (
+                            <span className="text-sm text-muted-foreground">Admin payout pending</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      No paid orders yet
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
 

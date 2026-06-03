@@ -3,6 +3,7 @@ import { ServerDataStore } from '@/lib/server-data-store'
 import { requireCurrentUser } from '@/lib/auth-server'
 import { canManageDevice } from '@/lib/access-control'
 import { hasUserRole } from '@/lib/auth-types'
+import { AccessGrant } from '@/lib/mock-data'
 
 export async function GET(
   request: Request,
@@ -79,7 +80,7 @@ export async function POST(
     return NextResponse.json({ error: 'Only the device owner or an admin can action this request.' }, { status: 403 })
   }
 
-  let result: { request: typeof requestItem; grant?: any } = { request: requestItem }
+  let result: { request: typeof requestItem; grant?: AccessGrant } = { request: requestItem }
 
   if (action === 'approve') {
     const updatedRequest = await ServerDataStore.updateAccessRequest(requestId, { status: 'approved' })
@@ -87,7 +88,7 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to update access request' }, { status: 500 })
     }
 
-    const grant = {
+    const grant: AccessGrant = {
       id: `ag_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
       deviceId: updatedRequest.deviceId,
       developerId: updatedRequest.developerId,
@@ -99,6 +100,10 @@ export async function POST(
     }
 
     await ServerDataStore.addAccessGrant(grant)
+    const order = await ServerDataStore.getOrderByAccessRequestId(updatedRequest.id)
+    if (order?.paymentStatus === 'PAID' && order.payoutStatus === 'NOT_ELIGIBLE') {
+      await ServerDataStore.updateOrder(order.id, { payoutStatus: 'ELIGIBLE' })
+    }
     await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'access.approved', 'access_request', requestId)
 
     result = { request: updatedRequest, grant }
@@ -106,6 +111,10 @@ export async function POST(
     const updatedRequest = await ServerDataStore.updateAccessRequest(requestId, { status: 'rejected' })
     if (!updatedRequest) {
       return NextResponse.json({ error: 'Failed to update access request' }, { status: 500 })
+    }
+    const order = await ServerDataStore.getOrderByAccessRequestId(updatedRequest.id)
+    if (order?.paymentStatus === 'PAID' && order.payoutStatus === 'NOT_ELIGIBLE') {
+      await ServerDataStore.updateOrder(order.id, { payoutStatus: 'REFUND_REQUIRED' })
     }
     await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'access.rejected', 'access_request', requestId)
     result = { request: updatedRequest }

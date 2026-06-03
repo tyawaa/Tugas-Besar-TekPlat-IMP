@@ -93,6 +93,7 @@ export async function applyMidtransStatusToOrder(
   const paymentType = asString(statusResponse.payment_type)
   const updatedOrder = await ServerDataStore.updateOrder(order.id, {
     paymentStatus,
+    payoutStatus: paymentStatus === 'PAID' ? 'NOT_ELIGIBLE' : order.payoutStatus,
     paymentMethod: paymentType || order.paymentMethod,
     updatedAt: new Date().toISOString(),
   })

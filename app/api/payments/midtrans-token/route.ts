@@ -5,6 +5,7 @@ import { ServerDataStore } from '@/lib/server-data-store'
 import { hasUserRole } from '@/lib/auth-types'
 import { Order } from '@/lib/mock-data'
 import { getMidtransConfig } from '@/lib/midtrans-payments'
+import { createOrderPayoutFields } from '@/lib/order-payouts'
 
 export const dynamic = 'force-dynamic'
 
@@ -95,6 +96,7 @@ export async function POST(request: Request) {
     totalAmount,
     currency: device.currency || 'IDR',
     paymentStatus: 'PENDING',
+    ...createOrderPayoutFields(totalAmount),
     midtransOrderId,
     createdAt: existingOrder?.createdAt || now,
     updatedAt: now,
@@ -124,6 +126,10 @@ export async function POST(request: Request) {
         totalAmount,
         currency: order.currency,
         paymentStatus: 'PENDING',
+        payoutStatus: 'NOT_ELIGIBLE',
+        platformFee: order.platformFee,
+        ownerAmount: order.ownerAmount,
+        paidOutAt: undefined,
         snapToken: transaction.token,
         midtransOrderId: order.midtransOrderId,
         updatedAt: now,

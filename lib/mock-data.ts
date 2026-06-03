@@ -3,6 +3,7 @@
 export type UserRole = 'device_owner' | 'developer' | 'admin'
 export type BillingType = 'free' | 'one_time'
 export type PaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'EXPIRED'
+export type PayoutStatus = 'NOT_ELIGIBLE' | 'ELIGIBLE' | 'PAID_OUT' | 'REFUND_REQUIRED' | 'REFUNDED'
 
 export interface User {
   id: string
@@ -93,6 +94,10 @@ export interface Order {
   currency: string
   paymentMethod?: string
   paymentStatus: PaymentStatus
+  payoutStatus: PayoutStatus
+  platformFee: number
+  ownerAmount: number
+  paidOutAt?: string
   snapToken?: string
   midtransOrderId: string
   createdAt: string

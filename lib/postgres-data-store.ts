@@ -16,6 +16,7 @@ import {
 } from './mock-data'
 import { AuthSession, StoredUser, normalizeStoredUser, normalizeUserRoles } from './auth-types'
 import { createInitialDemoUsers } from './demo-users'
+import { normalizeOrderPayout } from './order-payouts'
 
 const POSTGRES_URL =
   process.env.DATABASE_URL ||
@@ -259,6 +260,10 @@ async function createTables(client: PoolClient): Promise<void> {
       currency TEXT NOT NULL DEFAULT 'IDR',
       payment_method TEXT,
       payment_status TEXT NOT NULL CHECK (payment_status IN ('PENDING', 'PAID', 'FAILED', 'EXPIRED')),
+      payout_status TEXT NOT NULL DEFAULT 'NOT_ELIGIBLE' CHECK (payout_status IN ('NOT_ELIGIBLE', 'ELIGIBLE', 'PAID_OUT', 'REFUND_REQUIRED', 'REFUNDED')),
+      platform_fee INTEGER NOT NULL DEFAULT 0,
+      owner_amount INTEGER NOT NULL DEFAULT 0,
+      paid_out_at TEXT,
       snap_token TEXT,
       midtrans_order_id TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL,
@@ -336,6 +341,19 @@ async function createTables(client: PoolClient): Promise<void> {
     ALTER TABLE access_requests
       ADD CONSTRAINT access_requests_status_check
       CHECK (status IN ('pending', 'pending_payment', 'approved', 'rejected', 'revoked', 'cancelled'));
+
+    ALTER TABLE orders
+      ADD COLUMN IF NOT EXISTS payout_status TEXT NOT NULL DEFAULT 'NOT_ELIGIBLE',
+      ADD COLUMN IF NOT EXISTS platform_fee INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS owner_amount INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS paid_out_at TEXT;
+
+    ALTER TABLE orders
+      DROP CONSTRAINT IF EXISTS orders_payout_status_check;
+
+    ALTER TABLE orders
+      ADD CONSTRAINT orders_payout_status_check
+      CHECK (payout_status IN ('NOT_ELIGIBLE', 'ELIGIBLE', 'PAID_OUT', 'REFUND_REQUIRED', 'REFUNDED'));
   `)
 }
 
@@ -349,6 +367,10 @@ interface OrderRow {
   currency: string
   payment_method: string | null
   payment_status: Order['paymentStatus']
+  payout_status: Order['payoutStatus']
+  platform_fee: number
+  owner_amount: number
+  paid_out_at: string | null
   snap_token: string | null
   midtrans_order_id: string
   created_at: string
@@ -407,8 +429,9 @@ async function seedInitialData(client: PoolClient): Promise<void> {
       await client.query(
         `INSERT INTO orders (
           id, access_request_id, device_id, buyer_id, seller_id, total_amount, currency,
-          payment_method, payment_status, snap_token, midtrans_order_id, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+          payment_method, payment_status, payout_status, platform_fee, owner_amount, paid_out_at,
+          snap_token, midtrans_order_id, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
         orderParams(order)
       )
     }
@@ -599,7 +622,7 @@ function userParams(user: StoredUser): unknown[] {
 }
 
 function mapOrder(row: OrderRow): Order {
-  return {
+  return normalizeOrderPayout({
     id: row.id,
     accessRequestId: row.access_request_id,
     deviceId: row.device_id,
@@ -609,11 +632,15 @@ function mapOrder(row: OrderRow): Order {
     currency: row.currency,
     paymentMethod: row.payment_method || undefined,
     paymentStatus: row.payment_status,
+    payoutStatus: row.payout_status,
+    platformFee: row.platform_fee,
+    ownerAmount: row.owner_amount,
+    paidOutAt: row.paid_out_at || undefined,
     snapToken: row.snap_token || undefined,
     midtransOrderId: row.midtrans_order_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-  }
+  })
 }
 
 function sessionParams(session: AuthSession): unknown[] {
@@ -674,20 +701,25 @@ function accessGrantParams(grant: AccessGrant): unknown[] {
 }
 
 function orderParams(order: Order): unknown[] {
+  const normalizedOrder = normalizeOrderPayout(order)
   return [
-    order.id,
-    order.accessRequestId,
-    order.deviceId,
-    order.buyerId,
-    order.sellerId,
-    Math.max(0, Math.round(Number(order.totalAmount || 0))),
-    order.currency || 'IDR',
-    order.paymentMethod || null,
-    order.paymentStatus,
-    order.snapToken || null,
-    order.midtransOrderId,
-    order.createdAt,
-    order.updatedAt,
+    normalizedOrder.id,
+    normalizedOrder.accessRequestId,
+    normalizedOrder.deviceId,
+    normalizedOrder.buyerId,
+    normalizedOrder.sellerId,
+    Math.max(0, Math.round(Number(normalizedOrder.totalAmount || 0))),
+    normalizedOrder.currency || 'IDR',
+    normalizedOrder.paymentMethod || null,
+    normalizedOrder.paymentStatus,
+    normalizedOrder.payoutStatus,
+    normalizedOrder.platformFee,
+    normalizedOrder.ownerAmount,
+    normalizedOrder.paidOutAt || null,
+    normalizedOrder.snapToken || null,
+    normalizedOrder.midtransOrderId,
+    normalizedOrder.createdAt,
+    normalizedOrder.updatedAt,
   ]
 }
 
@@ -787,8 +819,9 @@ async function upsertOrder(order: Order): Promise<Order> {
   const rows = await query<OrderRow>(
     `INSERT INTO orders (
        id, access_request_id, device_id, buyer_id, seller_id, total_amount, currency,
-       payment_method, payment_status, snap_token, midtrans_order_id, created_at, updated_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       payment_method, payment_status, payout_status, platform_fee, owner_amount, paid_out_at,
+       snap_token, midtrans_order_id, created_at, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
      ON CONFLICT (id) DO UPDATE SET
        access_request_id = EXCLUDED.access_request_id,
        device_id = EXCLUDED.device_id,
@@ -798,6 +831,10 @@ async function upsertOrder(order: Order): Promise<Order> {
        currency = EXCLUDED.currency,
        payment_method = EXCLUDED.payment_method,
        payment_status = EXCLUDED.payment_status,
+       payout_status = EXCLUDED.payout_status,
+       platform_fee = EXCLUDED.platform_fee,
+       owner_amount = EXCLUDED.owner_amount,
+       paid_out_at = EXCLUDED.paid_out_at,
        snap_token = EXCLUDED.snap_token,
        midtrans_order_id = EXCLUDED.midtrans_order_id,
        created_at = EXCLUDED.created_at,

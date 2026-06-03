@@ -18,6 +18,7 @@ import {
 import { AuthSession, StoredUser, normalizeStoredUser } from './auth-types'
 import { createInitialDemoUsers, shouldSeedDemoUsers } from './demo-users'
 import { isPostgresConfigured, PostgresDataStore } from './postgres-data-store'
+import { normalizeOrderPayout } from './order-payouts'
 
 const DATA_DIR =
   process.env.IOTBRIDGE_DATA_DIR ||
@@ -383,7 +384,8 @@ export class ServerDataStore {
 
   static async getAllOrders(): Promise<Order[]> {
     if (isPostgresConfigured()) return PostgresDataStore.getAllOrders()
-    return this.getOrdersFile()
+    const orders = await this.getOrdersFile()
+    return orders.map(normalizeOrderPayout)
   }
 
   static async getOrderById(id: string): Promise<Order | null> {
