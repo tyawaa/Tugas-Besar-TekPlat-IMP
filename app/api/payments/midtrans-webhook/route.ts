@@ -114,7 +114,59 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Order not found.' }, { status: 404 })
   }
 
-  if (paymentStatus === 'PAID') {
+  if (
+    result.duplicate &&
+    !result.accessStatusChanged &&
+    !result.refundRequired &&
+    !result.latePaidAfterCancellation
+  ) {
+    console.info('midtrans.webhook_duplicate_noop', {
+      notificationTransactionId,
+      midtransOrderId,
+      paymentStatus,
+    })
+    return NextResponse.json({
+      success: true,
+      duplicate: true,
+      order: result.order,
+      access: result.access,
+    })
+  }
+
+  if (result.latePaidAfterCancellation) {
+    await ServerDataStore.logAction(
+      'midtrans',
+      'Midtrans Webhook',
+      'admin',
+      'payment.late_paid_refund_required',
+      'access_request',
+      result.order.accessRequestId,
+      'success',
+      `Order ${result.order.midtransOrderId} was paid after local cancellation; manual refund review required`
+    )
+  } else if (paymentStatus === 'PAID' && result.refundRequired) {
+    await ServerDataStore.logAction(
+      'midtrans',
+      'Midtrans Webhook',
+      'admin',
+      'payment.refund_required',
+      'access_request',
+      result.order.accessRequestId,
+      'success',
+      `Order ${result.order.midtransOrderId} paid status requires manual refund review`
+    )
+  } else if (result.duplicate && paymentStatus === 'PAID' && result.accessStatusChanged) {
+    await ServerDataStore.logAction(
+      'midtrans',
+      'Midtrans Webhook',
+      'admin',
+      'payment.paid_reconciled',
+      'access_request',
+      result.order.accessRequestId,
+      'success',
+      `Order ${result.order.midtransOrderId} duplicate paid status reconciled access request`
+    )
+  } else if (paymentStatus === 'PAID') {
     await ServerDataStore.logAction(
       'midtrans',
       'Midtrans Webhook',

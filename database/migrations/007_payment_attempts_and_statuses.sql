@@ -1,3 +1,7 @@
+-- Retry payment is represented by multiple rows in orders for one access_request_id.
+-- This migration does not create a separate payment_attempts table.
+-- Existing Midtrans callbacks continue to match the correct local attempt via midtrans_order_id.
+
 ALTER TABLE access_requests
   ADD COLUMN IF NOT EXISTS billing_snapshot JSONB;
 

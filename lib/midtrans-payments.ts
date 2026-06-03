@@ -1,10 +1,12 @@
 import { AccessRequest, Order, PaymentStatus } from './mock-data'
 import {
   canMarkRefundRequired,
+  canMovePayoutStatusToRefundRequired,
   canTransitionAccessRequestStatus,
-  canTransitionOrderStatus,
   getPayoutStatusAfterPaymentSync,
+  getOrderStatusTransitionKind,
   isUnpaidTerminalPaymentStatus,
+  markLatePaidAfterLocalCancel,
   markPaymentCancelled,
   markPaymentDenied,
   markPaymentExpired,
@@ -27,6 +29,11 @@ export interface PaymentAccessSyncResult {
 export interface PaymentOrderSyncResult {
   order: Order
   access: PaymentAccessSyncResult | null
+  orderStatusChanged: boolean
+  accessStatusChanged: boolean
+  refundRequired: boolean
+  duplicate: boolean
+  latePaidAfterCancellation: boolean
 }
 
 export class MidtransPaymentValidationError extends Error {
@@ -107,6 +114,29 @@ async function markRequestReadyForOwnerApproval(order: Order): Promise<PaymentAc
 
   const updatedRequest = await ServerDataStore.updateAccessRequest(accessRequest.id, { status: 'pending' })
   return { request: updatedRequest }
+}
+
+async function cancelRequestAfterLatePaid(order: Order): Promise<{ access: PaymentAccessSyncResult; changed: boolean }> {
+  const accessRequest = await ServerDataStore.getAccessRequestById(order.accessRequestId)
+  if (!accessRequest) {
+    return {
+      access: { request: null },
+      changed: false,
+    }
+  }
+
+  if (!canTransitionAccessRequestStatus(accessRequest.status, 'cancelled')) {
+    return {
+      access: { request: accessRequest },
+      changed: false,
+    }
+  }
+
+  const updatedRequest = await ServerDataStore.updateAccessRequest(accessRequest.id, { status: 'cancelled' })
+  return {
+    access: { request: updatedRequest },
+    changed: true,
+  }
 }
 
 function getMidtransGrossAmount(value: unknown): number | null {
@@ -214,6 +244,58 @@ async function markPaidCancelledOrRejectedRequestAsRefundRequired(order: Order):
   return updatedOrder
 }
 
+async function reconcilePaidOrder(order: Order): Promise<{
+  order: Order
+  access: PaymentAccessSyncResult | null
+  accessStatusChanged: boolean
+  refundRequired: boolean
+}> {
+  const accessRequest = await ServerDataStore.getAccessRequestById(order.accessRequestId)
+  if (!accessRequest) {
+    return {
+      order,
+      access: { request: null },
+      accessStatusChanged: false,
+      refundRequired: false,
+    }
+  }
+
+  if (
+    accessRequest.status === 'pending_payment' &&
+    order.payoutStatus === 'NOT_ELIGIBLE' &&
+    canTransitionAccessRequestStatus(accessRequest.status, 'pending')
+  ) {
+    const access = await markRequestReadyForOwnerApproval(order)
+    return {
+      order,
+      access,
+      accessStatusChanged: access.request?.status === 'pending',
+      refundRequired: false,
+    }
+  }
+
+  if (
+    accessRequest.status === 'cancelled' ||
+    accessRequest.status === 'rejected' ||
+    ((accessRequest.status === 'approved' || accessRequest.status === 'revoked') && order.payoutStatus === 'NOT_ELIGIBLE')
+  ) {
+    const updatedOrder = await markPaidCancelledOrRejectedRequestAsRefundRequired(order)
+    return {
+      order: updatedOrder,
+      access: { request: accessRequest },
+      accessStatusChanged: false,
+      refundRequired: updatedOrder.payoutStatus === 'REFUND_REQUIRED' && order.payoutStatus !== 'REFUND_REQUIRED',
+    }
+  }
+
+  return {
+    order,
+    access: { request: accessRequest },
+    accessStatusChanged: false,
+    refundRequired: false,
+  }
+}
+
 export async function applyMidtransStatusToOrder(
   statusResponse: Record<string, unknown>
 ): Promise<PaymentOrderSyncResult | null> {
@@ -250,15 +332,71 @@ export async function applyMidtransStatusToOrder(
 
   validateMidtransPaymentResponse(statusResponse, order)
 
-  if (order.paymentStatus === paymentStatus) {
+  const transitionKind = getOrderStatusTransitionKind(order.paymentStatus, paymentStatus)
+
+  if (transitionKind === 'DUPLICATE') {
     console.info('midtrans.status_duplicate', {
       orderId: order.id,
       midtransOrderId,
       paymentStatus,
     })
+
+    if (paymentStatus === 'PAID') {
+      const reconciled = await reconcilePaidOrder(order)
+      return {
+        order: reconciled.order,
+        access: reconciled.access,
+        orderStatusChanged: false,
+        accessStatusChanged: reconciled.accessStatusChanged,
+        refundRequired: reconciled.refundRequired,
+        duplicate: true,
+        latePaidAfterCancellation: false,
+      }
+    }
+
+    return {
+      order,
+      access: null,
+      orderStatusChanged: false,
+      accessStatusChanged: false,
+      refundRequired: false,
+      duplicate: true,
+      latePaidAfterCancellation: false,
+    }
   }
 
-  if (!canTransitionOrderStatus(order.paymentStatus, paymentStatus)) {
+  if (transitionKind === 'LATE_PAID_AFTER_LOCAL_CANCEL') {
+    console.warn('midtrans.late_paid_after_local_cancel', {
+      orderId: order.id,
+      midtransOrderId,
+      currentPaymentStatus: order.paymentStatus,
+      nextPaymentStatus: paymentStatus,
+      payoutStatus: order.payoutStatus,
+    })
+
+    const paymentType = asString(statusResponse.payment_type)
+    const updatedOrder = await ServerDataStore.updateOrder(
+      order.id,
+      markLatePaidAfterLocalCancel(order, paymentType, new Date().toISOString())
+    )
+
+    if (!updatedOrder) {
+      throw new Error(`Failed to mark late paid cancelled order ${order.id} for refund review.`)
+    }
+
+    const accessResult = await cancelRequestAfterLatePaid(updatedOrder)
+    return {
+      order: updatedOrder,
+      access: accessResult.access,
+      orderStatusChanged: true,
+      accessStatusChanged: accessResult.changed,
+      refundRequired: updatedOrder.payoutStatus === 'REFUND_REQUIRED' && canMovePayoutStatusToRefundRequired(order.payoutStatus),
+      duplicate: false,
+      latePaidAfterCancellation: true,
+    }
+  }
+
+  if (transitionKind === 'INVALID') {
     console.warn('midtrans.status_transition_ignored', {
       orderId: order.id,
       midtransOrderId,
@@ -268,6 +406,11 @@ export async function applyMidtransStatusToOrder(
     return {
       order,
       access: null,
+      orderStatusChanged: false,
+      accessStatusChanged: false,
+      refundRequired: false,
+      duplicate: false,
+      latePaidAfterCancellation: false,
     }
   }
 
@@ -282,10 +425,15 @@ export async function applyMidtransStatusToOrder(
   }
 
   if (paymentStatus === 'PAID') {
-    const reconciledOrder = await markPaidCancelledOrRejectedRequestAsRefundRequired(updatedOrder)
+    const reconciled = await reconcilePaidOrder(updatedOrder)
     return {
-      order: reconciledOrder,
-      access: await markRequestReadyForOwnerApproval(reconciledOrder),
+      order: reconciled.order,
+      access: reconciled.access,
+      orderStatusChanged: true,
+      accessStatusChanged: reconciled.accessStatusChanged,
+      refundRequired: reconciled.refundRequired,
+      duplicate: false,
+      latePaidAfterCancellation: false,
     }
   }
 
@@ -293,11 +441,21 @@ export async function applyMidtransStatusToOrder(
     return {
       order: updatedOrder,
       access: null,
+      orderStatusChanged: true,
+      accessStatusChanged: false,
+      refundRequired: false,
+      duplicate: false,
+      latePaidAfterCancellation: false,
     }
   }
 
   return {
     order: updatedOrder,
     access: null,
+    orderStatusChanged: true,
+    accessStatusChanged: false,
+    refundRequired: false,
+    duplicate: false,
+    latePaidAfterCancellation: false,
   }
 }

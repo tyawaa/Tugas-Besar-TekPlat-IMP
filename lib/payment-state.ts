@@ -1,6 +1,7 @@
 import { AccessRequest, Order, PaymentStatus, PayoutStatus } from './mock-data'
 
 type AccessRequestStatus = AccessRequest['status']
+export type OrderStatusTransitionKind = 'DUPLICATE' | 'VALID_FORWARD' | 'LATE_PAID_AFTER_LOCAL_CANCEL' | 'INVALID'
 
 const PAYMENT_STATUS_TRANSITIONS: Record<PaymentStatus, readonly PaymentStatus[]> = {
   PENDING: [
@@ -48,8 +49,18 @@ function sortOrdersNewestFirst(orders: Order[]): Order[] {
 }
 
 export function canTransitionOrderStatus(currentStatus: PaymentStatus, nextStatus: PaymentStatus): boolean {
-  if (currentStatus === nextStatus) return true
-  return PAYMENT_STATUS_TRANSITIONS[currentStatus].includes(nextStatus)
+  const transitionKind = getOrderStatusTransitionKind(currentStatus, nextStatus)
+  return transitionKind === 'DUPLICATE' || transitionKind === 'VALID_FORWARD'
+}
+
+export function getOrderStatusTransitionKind(
+  currentStatus: PaymentStatus,
+  nextStatus: PaymentStatus
+): OrderStatusTransitionKind {
+  if (currentStatus === nextStatus) return 'DUPLICATE'
+  if (currentStatus === 'CANCELLED' && nextStatus === 'PAID') return 'LATE_PAID_AFTER_LOCAL_CANCEL'
+  if (PAYMENT_STATUS_TRANSITIONS[currentStatus].includes(nextStatus)) return 'VALID_FORWARD'
+  return 'INVALID'
 }
 
 export function canTransitionAccessRequestStatus(
@@ -121,10 +132,11 @@ export function canMarkPayoutPaidOut(order: Order): boolean {
 }
 
 export function canMarkRefundRequired(order: Order): boolean {
-  return isPaidOrLaterPaymentStatus(order.paymentStatus) && (
-    order.payoutStatus === 'NOT_ELIGIBLE' ||
-    order.payoutStatus === 'ELIGIBLE'
-  )
+  return isPaidOrLaterPaymentStatus(order.paymentStatus) && canMovePayoutStatusToRefundRequired(order.payoutStatus)
+}
+
+export function canMovePayoutStatusToRefundRequired(payoutStatus: PayoutStatus): boolean {
+  return payoutStatus === 'NOT_ELIGIBLE' || payoutStatus === 'ELIGIBLE'
 }
 
 export function canMarkRefundCompleted(order: Order): boolean {
@@ -171,6 +183,18 @@ export function markRefundRequired(order: Order, updatedAt: string): Partial<Ord
   return {
     payoutStatus: 'REFUND_REQUIRED',
     paidOutAt: undefined,
+    updatedAt,
+  }
+}
+
+export function markLatePaidAfterLocalCancel(order: Order, paymentMethod: string, updatedAt: string): Partial<Order> {
+  const shouldMarkRefundRequired = canMovePayoutStatusToRefundRequired(order.payoutStatus)
+
+  return {
+    paymentStatus: 'PAID',
+    paymentMethod: paymentMethod || order.paymentMethod,
+    payoutStatus: shouldMarkRefundRequired ? 'REFUND_REQUIRED' : order.payoutStatus,
+    paidOutAt: shouldMarkRefundRequired ? undefined : order.paidOutAt,
     updatedAt,
   }
 }
