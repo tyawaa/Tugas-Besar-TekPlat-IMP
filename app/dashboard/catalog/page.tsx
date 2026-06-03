@@ -37,9 +37,9 @@ import { AccessGrant, AccessRequest, Device, deviceHealth } from '@/lib/mock-dat
 import { useAuth } from '@/lib/auth-context'
 import { formatDistanceToNow } from 'date-fns'
 import { HealthBadge } from '@/components/devices/health-badge'
-import { cancelAccessRequest, createAccessRequest, createMidtransPaymentToken, getAccessGrants, getAccessRequests, getDevices } from '@/lib/api'
+import { cancelAccessRequest, createAccessRequest, createMidtransPaymentToken, getAccessGrants, getAccessRequests, getDevices, syncMidtransPaymentStatus } from '@/lib/api'
 
-const PAYMENT_REFRESH_DELAYS_MS = [1500, 4000, 8000, 15000]
+const PAYMENT_SYNC_DELAYS_MS = [1500, 4000, 8000, 15000]
 
 declare global {
   interface Window {
@@ -98,14 +98,6 @@ export default function CatalogPage() {
     loadCatalogData()
   }, [loadCatalogData])
 
-  const refreshCatalogAfterPayment = useCallback(() => {
-    PAYMENT_REFRESH_DELAYS_MS.forEach((delayMs) => {
-      window.setTimeout(() => {
-        void loadCatalogData()
-      }, delayMs)
-    })
-  }, [loadCatalogData])
-
   const filteredDevices = catalogDevices.filter((device) => {
     const matchesSearch =
       device.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -154,45 +146,101 @@ export default function CatalogPage() {
     return `${device.currency || 'IDR'} ${Number(device.accessPrice || 0).toLocaleString('id-ID')}`
   }
 
-  const handlePayForRequest = async (request: AccessRequest, device: Device) => {
+  const syncPaymentStatus = useCallback(async (request: AccessRequest): Promise<boolean> => {
+    try {
+      const result = await syncMidtransPaymentStatus({ accessRequestId: request.id })
+      await loadCatalogData()
+
+      if (result.order.paymentStatus === 'PAID') {
+        setPaymentMessage('Payment confirmed. Waiting for owner approval.')
+        return true
+      }
+
+      if (result.order.paymentStatus === 'FAILED' || result.order.paymentStatus === 'EXPIRED') {
+        setPaymentMessage('Payment is no longer active. Please submit a new access request.')
+        return true
+      }
+
+      return false
+    } catch (error) {
+      console.error('Failed to sync Midtrans payment status', error)
+      return false
+    }
+  }, [loadCatalogData])
+
+  const schedulePaymentStatusSync = useCallback((request: AccessRequest): void => {
+    PAYMENT_SYNC_DELAYS_MS.forEach((delayMs) => {
+      window.setTimeout(() => {
+        void syncPaymentStatus(request)
+      }, delayMs)
+    })
+  }, [syncPaymentStatus])
+
+  const openMidtransPayment = async (request: AccessRequest, device: Device): Promise<void> => {
     if (!userName || !userEmail) return
 
+    const payment = await createMidtransPaymentToken({
+      orderId: request.id,
+      totalAmount: Number(device.accessPrice || 0),
+      customerName: userName,
+      customerEmail: userEmail,
+    })
+
+    const syncAfterPayment = () => {
+      void syncPaymentStatus(request)
+      schedulePaymentStatusSync(request)
+    }
+
+    const options = {
+      onSuccess: () => {
+        setPaymentMessage('Payment submitted successfully. Waiting for owner approval after Midtrans confirms it.')
+        syncAfterPayment()
+      },
+      onPending: () => {
+        setPaymentMessage('Payment is pending. After it is confirmed, the device owner will review your access request.')
+        syncAfterPayment()
+      },
+      onError: () => {
+        setPaymentMessage('Payment failed. You can try again from this catalog card.')
+        syncAfterPayment()
+      },
+      onClose: () => {
+        setPaymentMessage('Payment popup closed. Your access is still waiting for payment.')
+        syncAfterPayment()
+      },
+    }
+
+    if (window.snap) {
+      window.snap.pay(payment.token, options)
+    } else {
+      window.location.href = payment.redirect_url
+    }
+  }
+
+  const handlePayForRequest = async (request: AccessRequest, device: Device) => {
     try {
       setUpdatingDeviceId(device.id)
       setPaymentMessage('Opening Midtrans payment...')
-      const payment = await createMidtransPaymentToken({
-        orderId: request.id,
-        totalAmount: Number(device.accessPrice || 0),
-        customerName: userName,
-        customerEmail: userEmail,
-      })
-
-      const options = {
-        onSuccess: () => {
-          setPaymentMessage('Payment submitted successfully. Waiting for owner approval after Midtrans confirms it.')
-          refreshCatalogAfterPayment()
-        },
-        onPending: () => {
-          setPaymentMessage('Payment is pending. After it is confirmed, the device owner will review your access request.')
-          refreshCatalogAfterPayment()
-        },
-        onError: () => {
-          setPaymentMessage('Payment failed. You can try again from this catalog card.')
-          refreshCatalogAfterPayment()
-        },
-        onClose: () => {
-          setPaymentMessage('Payment popup closed. Your access is still waiting for payment.')
-          refreshCatalogAfterPayment()
-        },
-      }
-
-      if (window.snap) {
-        window.snap.pay(payment.token, options)
-      } else {
-        window.location.href = payment.redirect_url
-      }
+      await openMidtransPayment(request, device)
     } catch (error) {
       console.error('Failed to create Midtrans payment token', error)
+      setPaymentMessage('Failed to open Midtrans payment. Please try again.')
+    } finally {
+      setUpdatingDeviceId(null)
+    }
+  }
+
+  const handleRetryPaymentForRequest = async (request: AccessRequest, device: Device) => {
+    try {
+      setUpdatingDeviceId(device.id)
+      setPaymentMessage('Checking payment status...')
+      const alreadyResolved = await syncPaymentStatus(request)
+      if (alreadyResolved) return
+
+      setPaymentMessage('Opening Midtrans payment...')
+      await openMidtransPayment(request, device)
+    } catch (error) {
+      console.error('Failed to retry Midtrans payment', error)
       setPaymentMessage('Failed to open Midtrans payment. Please try again.')
     } finally {
       setUpdatingDeviceId(null)
@@ -386,7 +434,7 @@ export default function CatalogPage() {
                           <StatusBadge status="pending_payment" />
                         </div>
                         <Button
-                          onClick={() => handlePayForRequest(pendingPaymentRequest, device)}
+                          onClick={() => handleRetryPaymentForRequest(pendingPaymentRequest, device)}
                           disabled={isUpdating}
                           className="w-full bg-primary hover:bg-primary/90"
                         >

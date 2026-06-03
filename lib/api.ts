@@ -174,6 +174,15 @@ export async function createMidtransPaymentToken(payload: {
   })
 }
 
+export async function syncMidtransPaymentStatus(payload: {
+  accessRequestId: string
+}): Promise<{ order: Order; access: { request: AccessRequest | null } | null }> {
+  return fetchJson<{ order: Order; access: { request: AccessRequest | null } | null }>('/api/payments/midtrans-status', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export async function revokeAccessGrant(grantId: string, actorId: string, actorName: string, actorRole: UserRole): Promise<{ success: boolean }> {
   return fetchJson<{ success: boolean }>(`${baseUrl}/access-grants/${grantId}`, {
     method: 'POST',

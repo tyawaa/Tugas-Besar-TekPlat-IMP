@@ -17,6 +17,7 @@ declare module 'midtrans-client' {
     constructor(config: MidtransConfig)
     transaction: {
       notification(notification: Record<string, unknown>): Promise<Record<string, unknown>>
+      status(transactionId: string): Promise<Record<string, unknown>>
     }
   }
 

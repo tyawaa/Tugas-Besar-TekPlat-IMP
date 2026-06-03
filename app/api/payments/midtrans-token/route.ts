@@ -4,23 +4,9 @@ import { requireCurrentUser } from '@/lib/auth-server'
 import { ServerDataStore } from '@/lib/server-data-store'
 import { hasUserRole } from '@/lib/auth-types'
 import { Order } from '@/lib/mock-data'
+import { getMidtransConfig } from '@/lib/midtrans-payments'
 
 export const dynamic = 'force-dynamic'
-
-function getMidtransConfig() {
-  const serverKey = process.env.MIDTRANS_SERVER_KEY
-  const clientKey = process.env.MIDTRANS_CLIENT_KEY || process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY
-
-  if (!serverKey || !clientKey) {
-    throw new Error('Midtrans keys are not configured.')
-  }
-
-  return {
-    isProduction: false,
-    serverKey,
-    clientKey,
-  }
-}
 
 function getOrderTotal(value: unknown): number | null {
   const amount = Number(value)
