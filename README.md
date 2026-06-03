@@ -25,7 +25,8 @@ pnpm db:migrate
 
 ## Payment Production Notes
 
-- Use PostgreSQL for production payment safety. JSON/Redis fallback storage is suitable for demo/development, but it cannot enforce the partial unique index that prevents more than one active `PENDING` order per access request. Payment routes reject production runtime storage without PostgreSQL unless `IOTBRIDGE_ALLOW_UNSAFE_PAYMENT_STORAGE=true` is explicitly set for demo-only deployments.
+- Use PostgreSQL for production payment safety. JSON/Redis fallback storage is suitable for demo/development, but it cannot enforce the partial unique index that prevents more than one active `PENDING` order per access request. Payment mutation routes reject production runtime storage without PostgreSQL unless `IOTBRIDGE_ALLOW_UNSAFE_PAYMENT_STORAGE=true` is explicitly set for exceptional unsafe testing.
+- The Midtrans token route runs the production storage guard before creating or updating the billing snapshot, so unsafe production storage fails before payment writes begin.
 - Before applying migration `007_payment_attempts_and_statuses.sql` to existing production data, run the duplicate `PENDING` diagnostic query in that migration and resolve duplicates manually.
 - Owner approve/reject, request cancellation local state, admin payout/refund actions, and Midtrans webhook/status local sync use PostgreSQL transactions for local DB updates and audit logs. Midtrans API calls remain external side effects and should be reconciled if they fail mid-flow.
 - Admins can manually reconcile old pending payments with `POST /api/payments/midtrans-reconcile`. Send `{ "dryRun": true }` to inspect old `PENDING` orders without mutation. A scheduled reconciliation job and production monitoring alerts are still recommended for real deployments.

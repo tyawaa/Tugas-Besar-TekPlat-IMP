@@ -133,13 +133,6 @@ export async function POST(request: Request) {
   const thresholdMinutes = getThresholdMinutes(body)
   const limit = getLimit(body)
   const dryRun = getDryRun(body)
-  const cutoffTimestamp = Date.now() - thresholdMinutes * 60 * 1000
-  const allOrders = await ServerDataStore.getAllOrders()
-  const pendingOrders = allOrders
-    .filter(order => isOldPendingOrder(order, cutoffTimestamp))
-    .sort((first, second) => new Date(first.createdAt).valueOf() - new Date(second.createdAt).valueOf())
-    .slice(0, limit)
-
   const midtransConfig = getMidtransConfig()
   try {
     assertProductionPaymentStorage(midtransConfig)
@@ -149,6 +142,13 @@ export async function POST(request: Request) {
     }
     throw error
   }
+
+  const cutoffTimestamp = Date.now() - thresholdMinutes * 60 * 1000
+  const allOrders = await ServerDataStore.getAllOrders()
+  const pendingOrders = allOrders
+    .filter(order => isOldPendingOrder(order, cutoffTimestamp))
+    .sort((first, second) => new Date(first.createdAt).valueOf() - new Date(second.createdAt).valueOf())
+    .slice(0, limit)
 
   const coreApi = new midtransClient.CoreApi(midtransConfig)
   const results: ReconcileResultItem[] = []

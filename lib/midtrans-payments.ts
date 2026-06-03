@@ -63,7 +63,7 @@ export class MidtransPaymentValidationError extends Error {
 export class ProductionPaymentStorageError extends Error {
   constructor() {
     super(
-      'Production payments require PostgreSQL storage. Configure DATABASE_URL/POSTGRES_URL or explicitly set IOTBRIDGE_ALLOW_UNSAFE_PAYMENT_STORAGE=true for demo-only payment storage.'
+      'Production payment flows require Postgres storage. JSON/Redis storage is only safe for demo/development. Configure DATABASE_URL/POSTGRES_URL or explicitly set IOTBRIDGE_ALLOW_UNSAFE_PAYMENT_STORAGE=true for unsafe testing.'
     )
     this.name = 'ProductionPaymentStorageError'
   }
@@ -93,14 +93,15 @@ export function getMidtransConfig(): MidtransConfig {
   }
 }
 
-export function assertProductionPaymentStorage(config: MidtransConfig): void {
+export function assertProductionPaymentStorage(config?: MidtransConfig): void {
   const productionRuntime = process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production'
   const allowUnsafeStorage = process.env.IOTBRIDGE_ALLOW_UNSAFE_PAYMENT_STORAGE === 'true'
-  const requiresPostgres = config.isProduction || productionRuntime
+  const midtransProduction = config?.isProduction ?? getMidtransIsProduction()
+  const requiresPostgres = midtransProduction || productionRuntime
 
   if (requiresPostgres && !isPostgresConfigured() && !allowUnsafeStorage) {
     console.error('payment.production_storage_missing', {
-      isProduction: config.isProduction,
+      isProduction: midtransProduction,
       productionRuntime,
       postgresConfigured: false,
       allowUnsafeStorage,
@@ -110,7 +111,7 @@ export function assertProductionPaymentStorage(config: MidtransConfig): void {
 
   if (requiresPostgres && !isPostgresConfigured() && allowUnsafeStorage) {
     console.warn('payment.production_storage_unsafe_override', {
-      isProduction: config.isProduction,
+      isProduction: midtransProduction,
       productionRuntime,
       postgresConfigured: false,
       allowUnsafeStorage,

@@ -3,6 +3,7 @@ import { requireCurrentUser } from '@/lib/auth-server'
 import { hasUserRole } from '@/lib/auth-types'
 import { ServerDataStore } from '@/lib/server-data-store'
 import { canMarkPayoutPaidOut, canMarkRefundCompleted } from '@/lib/payment-state'
+import { assertProductionPaymentStorage, ProductionPaymentStorageError } from '@/lib/midtrans-payments'
 
 export async function POST(
   request: Request,
@@ -23,6 +24,17 @@ export async function POST(
   }
 
   const action = typeof body.action === 'string' ? body.action : ''
+  if (action === 'markPaidOut' || action === 'markRefunded') {
+    try {
+      assertProductionPaymentStorage()
+    } catch (error) {
+      if (error instanceof ProductionPaymentStorageError) {
+        return NextResponse.json({ error: error.message }, { status: 503 })
+      }
+      throw error
+    }
+  }
+
   const { orderId } = await params
   const order = await ServerDataStore.getOrderById(orderId)
 

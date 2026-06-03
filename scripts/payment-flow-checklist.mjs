@@ -7,7 +7,7 @@ const optionalEnvironment = [
   'MIDTRANS_IS_PRODUCTION=false',
   'NEXT_PUBLIC_MIDTRANS_IS_PRODUCTION=false',
   'DATABASE_URL for production payment safety; local JSON/Redis storage is demo-only for payment concurrency',
-  'IOTBRIDGE_ALLOW_UNSAFE_PAYMENT_STORAGE=true only for explicit demo deployments without PostgreSQL',
+  'IOTBRIDGE_ALLOW_UNSAFE_PAYMENT_STORAGE=true only for exceptional unsafe testing without PostgreSQL',
 ]
 
 const productionNotes = [
@@ -31,6 +31,7 @@ const checklist = [
   'Run the migration 007 duplicate PENDING precheck query before applying the Postgres partial unique index to existing production data.',
   'With PostgreSQL, confirm the partial unique index prevents two PENDING orders for the same access request.',
   'Force a duplicate pending insert conflict and confirm the token route fetches the existing active pending order instead of creating a second one.',
+  'Run a production-like token request without PostgreSQL and confirm the storage guard fails before billingSnapshot is created or updated.',
   'With JSON/Redis demo storage, confirm duplicate pending prevention is route-level only and not database-enforced.',
   'Send a duplicate paid webhook for an already paid order and confirm no duplicate order update or audit log is created.',
   'Send a duplicate pending webhook for an already pending order and confirm it is a no-op.',
@@ -55,7 +56,7 @@ const checklist = [
   'Send a Midtrans response with a mismatched currency and confirm it is rejected.',
   'Run POST /api/payments/midtrans-reconcile with dryRun=true as admin and confirm old PENDING orders are reported without mutation.',
   'Run POST /api/payments/midtrans-reconcile as admin and confirm old PENDING orders are synced, skipped, or reported as failed.',
-  'Run a production-like payment request without PostgreSQL and confirm payment routes return the storage guard error unless the explicit demo override is set.',
+  'Run production-like payment mutation routes without PostgreSQL and confirm token, status, webhook, reconciliation, cancel/approve/reject, and admin payout/refund return the storage guard error unless the explicit unsafe override is set.',
   'Manually review old PENDING orders that still need a future scheduled reconciliation job.',
   'Review production monitoring TODOs for mismatch alerts, stale refunds, webhook failures, duplicate pending orders, and late paid after cancel.',
   'Run pnpm lint, pnpm build, and pnpm payment:checklist before release.',

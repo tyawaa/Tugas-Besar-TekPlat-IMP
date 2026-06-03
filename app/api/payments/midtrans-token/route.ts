@@ -239,6 +239,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'This access request is not waiting for payment.' }, { status: 400 })
   }
 
+  const midtransConfig = getMidtransConfig()
+  try {
+    assertProductionPaymentStorage(midtransConfig)
+  } catch (error) {
+    if (error instanceof ProductionPaymentStorageError) {
+      return NextResponse.json({ error: error.message }, { status: 503 })
+    }
+    throw error
+  }
+
   let payableAccessRequest: AccessRequest
   try {
     payableAccessRequest = await ensureBillingSnapshot(accessRequest, accessRequest.deviceId, accessRequest.createdAt)
@@ -266,16 +276,6 @@ export async function POST(request: Request) {
       clientSubmittedAmount,
       quotedAmount: billingSnapshot.quotedAmount,
     })
-  }
-
-  const midtransConfig = getMidtransConfig()
-  try {
-    assertProductionPaymentStorage(midtransConfig)
-  } catch (error) {
-    if (error instanceof ProductionPaymentStorageError) {
-      return NextResponse.json({ error: error.message }, { status: 503 })
-    }
-    throw error
   }
 
   const snap = new midtransClient.Snap(midtransConfig)

@@ -37,6 +37,18 @@ interface OrderUpdateOperation {
   updates: Partial<Order>
 }
 
+function getProductionStorageGuardResponse(): NextResponse | null {
+  try {
+    assertProductionPaymentStorage()
+    return null
+  } catch (error) {
+    if (error instanceof ProductionPaymentStorageError) {
+      return NextResponse.json({ error: error.message }, { status: 503 })
+    }
+    throw error
+  }
+}
+
 async function getMidtransStatusWithRetry(
   coreApi: InstanceType<typeof midtransClient.CoreApi>,
   order: Order
@@ -153,6 +165,11 @@ export async function POST(
     }
 
     const orders = await ServerDataStore.getOrdersByAccessRequestId(requestItem.id)
+    if (requestItem.status === 'pending_payment' || orders.length > 0) {
+      const guardResponse = getProductionStorageGuardResponse()
+      if (guardResponse) return guardResponse
+    }
+
     const pendingOrder = getActivePendingOrder(orders)
     let relatedOrder: Order | undefined
     let refundRequired = false
@@ -173,15 +190,6 @@ export async function POST(
         })
       } else {
         const midtransConfig = getMidtransConfig()
-        try {
-          assertProductionPaymentStorage(midtransConfig)
-        } catch (error) {
-          if (error instanceof ProductionPaymentStorageError) {
-            return NextResponse.json({ error: error.message }, { status: 503 })
-          }
-          throw error
-        }
-
         const coreApi = new midtransClient.CoreApi(midtransConfig)
         let syncedOrder: Order
 
@@ -311,6 +319,11 @@ export async function POST(
   }
 
   const requestOrders = await ServerDataStore.getOrdersByAccessRequestId(requestItem.id)
+  if (requestItem.status === 'pending_payment' || requestOrders.length > 0) {
+    const guardResponse = getProductionStorageGuardResponse()
+    if (guardResponse) return guardResponse
+  }
+
   const paidOrders = getPaidOrders(requestOrders).filter(order => order.paymentStatus === 'PAID')
   if (requestOrders.length > 0 && paidOrders.length === 0) {
     return NextResponse.json(
