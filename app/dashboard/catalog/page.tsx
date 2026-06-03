@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { DashboardLayout, StatusBadge } from '@/components/layout/dashboard-layout'
 import { Card, CardContent } from '@/components/ui/card'
@@ -39,6 +39,8 @@ import { formatDistanceToNow } from 'date-fns'
 import { HealthBadge } from '@/components/devices/health-badge'
 import { cancelAccessRequest, createAccessRequest, createMidtransPaymentToken, getAccessGrants, getAccessRequests, getDevices } from '@/lib/api'
 
+const PAYMENT_REFRESH_DELAYS_MS = [1500, 4000, 8000, 15000]
+
 declare global {
   interface Window {
     snap?: {
@@ -75,26 +77,34 @@ export default function CatalogPage() {
     document.body.appendChild(script)
   }, [])
 
-  useEffect(() => {
+  const loadCatalogData = useCallback(async () => {
     if (!userId) return
 
-    const loadCatalogData = async () => {
-      try {
-        const [allDevices, requests, grants] = await Promise.all([
-          getDevices(),
-          getAccessRequests(),
-          getAccessGrants(),
-        ])
-        setCatalogDevices(allDevices.filter(d => d.visibility === 'catalog' && d.status !== 'archived'))
-        setAccessRequests(requests.filter(request => request.developerId === userId))
-        setAccessGrants(grants.filter(grant => grant.developerId === userId))
-      } catch (error) {
-        console.error('Failed to load catalog data', error)
-      }
+    try {
+      const [allDevices, requests, grants] = await Promise.all([
+        getDevices(),
+        getAccessRequests(),
+        getAccessGrants(),
+      ])
+      setCatalogDevices(allDevices.filter(d => d.visibility === 'catalog' && d.status !== 'archived'))
+      setAccessRequests(requests.filter(request => request.developerId === userId))
+      setAccessGrants(grants.filter(grant => grant.developerId === userId))
+    } catch (error) {
+      console.error('Failed to load catalog data', error)
     }
-
-    loadCatalogData()
   }, [userId])
+
+  useEffect(() => {
+    loadCatalogData()
+  }, [loadCatalogData])
+
+  const refreshCatalogAfterPayment = useCallback(() => {
+    PAYMENT_REFRESH_DELAYS_MS.forEach((delayMs) => {
+      window.setTimeout(() => {
+        void loadCatalogData()
+      }, delayMs)
+    })
+  }, [loadCatalogData])
 
   const filteredDevices = catalogDevices.filter((device) => {
     const matchesSearch =
@@ -158,10 +168,22 @@ export default function CatalogPage() {
       })
 
       const options = {
-        onSuccess: () => setPaymentMessage('Payment submitted successfully. Waiting for webhook confirmation.'),
-        onPending: () => setPaymentMessage('Payment is pending. Final access will be granted after Midtrans webhook confirms it.'),
-        onError: () => setPaymentMessage('Payment failed. You can try again from this catalog card.'),
-        onClose: () => setPaymentMessage('Payment popup closed. Your access is still waiting for payment.'),
+        onSuccess: () => {
+          setPaymentMessage('Payment submitted successfully. Waiting for owner approval after Midtrans confirms it.')
+          refreshCatalogAfterPayment()
+        },
+        onPending: () => {
+          setPaymentMessage('Payment is pending. After it is confirmed, the device owner will review your access request.')
+          refreshCatalogAfterPayment()
+        },
+        onError: () => {
+          setPaymentMessage('Payment failed. You can try again from this catalog card.')
+          refreshCatalogAfterPayment()
+        },
+        onClose: () => {
+          setPaymentMessage('Payment popup closed. Your access is still waiting for payment.')
+          refreshCatalogAfterPayment()
+        },
       }
 
       if (window.snap) {
@@ -426,7 +448,7 @@ export default function CatalogPage() {
                     <DialogTitle>Request Submitted</DialogTitle>
                     <DialogDescription>
                       {selectedDevice && isPaidDevice(selectedDevice)
-                        ? 'Complete payment in Midtrans. Access is granted only after the webhook confirms payment.'
+                        ? 'Complete payment in Midtrans. After the webhook confirms payment, the device owner can approve access.'
                         : 'Your access request has been sent to the device owner.'}
                     </DialogDescription>
                   </div>

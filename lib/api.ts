@@ -6,6 +6,7 @@ const baseUrl = '/api/v1'
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const res = await fetch(input, {
     ...init,
+    cache: 'no-store',
     credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',

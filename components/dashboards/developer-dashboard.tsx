@@ -31,6 +31,10 @@ function getLatestByDevice<T extends { deviceId: string; createdAt: string }>(it
   return Array.from(latestByDevice.values())
 }
 
+function isAccessGrantActive(grant: AccessGrant): boolean {
+  return new Date(grant.expiresAt).getTime() >= Date.now()
+}
+
 export function DeveloperDashboard() {
   const { userId } = useAuth()
   const [catalogDevices, setCatalogDevices] = useState<Device[]>([])
@@ -52,7 +56,7 @@ export function DeveloperDashboard() {
 
         setAllDevices(devices)
         setCatalogDevices(devices.filter((d) => d.visibility === 'catalog' && d.status !== 'archived'))
-        setMyGrants(getLatestByDevice(grants.filter((grant) => grant.developerId === userId)))
+        setMyGrants(getLatestByDevice(grants.filter((grant) => grant.developerId === userId && isAccessGrantActive(grant))))
         const pending = requests.filter(
           (r) => r.developerId === userId && (r.status === 'pending' || r.status === 'pending_payment')
         )

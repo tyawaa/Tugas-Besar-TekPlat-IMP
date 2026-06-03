@@ -32,6 +32,11 @@ function getSnapRedirectUrl(token: string) {
   return `https://app.sandbox.midtrans.com/snap/v2/vtweb/${token}`
 }
 
+function createMidtransOrderId(accessRequestId: string): string {
+  const randomSuffix = Math.random().toString(36).substring(2, 8)
+  return `iotbridge-${accessRequestId}-${Date.now()}-${randomSuffix}`
+}
+
 export async function POST(request: Request) {
   const currentUser = await requireCurrentUser(request)
   if (currentUser instanceof NextResponse) return currentUser
@@ -87,16 +92,16 @@ export async function POST(request: Request) {
   const now = new Date().toISOString()
   const existingOrder = await ServerDataStore.getOrderByAccessRequestId(accessRequest.id)
 
-  if (existingOrder?.snapToken && existingOrder.paymentStatus === 'PENDING') {
-    return NextResponse.json({
-      token: existingOrder.snapToken,
-      redirect_url: getSnapRedirectUrl(existingOrder.snapToken),
-      order: existingOrder,
-    })
+  if (existingOrder?.paymentStatus === 'PAID') {
+    return NextResponse.json(
+      { error: 'Payment is already completed for this access request. Wait for owner approval.' },
+      { status: 409 }
+    )
   }
 
-  const order: Order = existingOrder || {
-    id: `ord_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
+  const midtransOrderId = createMidtransOrderId(accessRequest.id)
+  const order: Order = {
+    id: existingOrder?.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
     accessRequestId: accessRequest.id,
     deviceId: device.id,
     buyerId: currentUser.id,
@@ -104,8 +109,8 @@ export async function POST(request: Request) {
     totalAmount,
     currency: device.currency || 'IDR',
     paymentStatus: 'PENDING',
-    midtransOrderId: `iotbridge-${accessRequest.id}-${Date.now()}`,
-    createdAt: now,
+    midtransOrderId,
+    createdAt: existingOrder?.createdAt || now,
     updatedAt: now,
   }
 
@@ -131,8 +136,10 @@ export async function POST(request: Request) {
   const savedOrder = existingOrder
     ? await ServerDataStore.updateOrder(existingOrder.id, {
         totalAmount,
+        currency: order.currency,
         paymentStatus: 'PENDING',
         snapToken: transaction.token,
+        midtransOrderId: order.midtransOrderId,
         updatedAt: now,
       })
     : await ServerDataStore.addOrder({
@@ -140,6 +147,10 @@ export async function POST(request: Request) {
         snapToken: transaction.token,
         updatedAt: now,
       })
+
+  if (!savedOrder) {
+    return NextResponse.json({ error: 'Failed to save Midtrans order.' }, { status: 500 })
+  }
 
   await ServerDataStore.logAction(
     currentUser.id,
@@ -149,7 +160,7 @@ export async function POST(request: Request) {
     'access_request',
     accessRequest.id,
     'success',
-    `Midtrans order ${order.midtransOrderId}`
+    `Midtrans order ${savedOrder.midtransOrderId}`
   )
 
   return NextResponse.json({

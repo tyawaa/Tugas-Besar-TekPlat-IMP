@@ -317,7 +317,7 @@ export default function AccessRequestsPage() {
               )}
               {selectedRequest.status === 'pending_payment' && (
                 <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
-                  Waiting for Midtrans webhook confirmation. Owner approval is not needed for paid access.
+                  Waiting for Midtrans confirmation. After payment succeeds, this request moves to Pending for owner approval.
                 </div>
               )}
             </div>

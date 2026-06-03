@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import midtransClient from 'midtrans-client'
 import { ServerDataStore } from '@/lib/server-data-store'
-import { AccessGrant, PaymentStatus } from '@/lib/mock-data'
+import { PaymentStatus } from '@/lib/mock-data'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,37 +33,19 @@ function mapPaymentStatus(transactionStatus: string, fraudStatus: string): Payme
   return null
 }
 
-async function ensurePaidAccessGrant(orderId: string) {
+async function markRequestReadyForOwnerApproval(orderId: string) {
   const order = await ServerDataStore.getOrderById(orderId)
   if (!order) return null
 
   const accessRequest = await ServerDataStore.getAccessRequestById(order.accessRequestId)
   if (!accessRequest) return null
 
-  const grants = await ServerDataStore.getAllAccessGrants()
-  const existingGrant = grants.find(
-    (grant) => grant.deviceId === accessRequest.deviceId && grant.developerId === accessRequest.developerId
-  )
-
-  const updatedRequest = await ServerDataStore.updateAccessRequest(accessRequest.id, { status: 'approved' })
-
-  if (existingGrant) {
-    return { request: updatedRequest, grant: existingGrant }
+  if (accessRequest.status !== 'pending_payment') {
+    return { request: accessRequest }
   }
 
-  const grant: AccessGrant = {
-    id: `ag_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
-    deviceId: accessRequest.deviceId,
-    developerId: accessRequest.developerId,
-    developerName: accessRequest.developerName,
-    scopes: accessRequest.scopes,
-    token: `token_${Math.random().toString(36).substring(2, 32).toUpperCase()}`,
-    expiresAt: accessRequest.requestedUntil,
-    createdAt: new Date().toISOString(),
-  }
-
-  const savedGrant = await ServerDataStore.addAccessGrant(grant)
-  return { request: updatedRequest, grant: savedGrant }
+  const updatedRequest = await ServerDataStore.updateAccessRequest(accessRequest.id, { status: 'pending' })
+  return { request: updatedRequest }
 }
 
 export async function POST(request: Request) {
@@ -102,9 +84,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Failed to update order.' }, { status: 500 })
   }
 
-  let grantResult = null
+  let accessResult = null
   if (paymentStatus === 'PAID') {
-    grantResult = await ensurePaidAccessGrant(updatedOrder.id)
+    accessResult = await markRequestReadyForOwnerApproval(updatedOrder.id)
     await ServerDataStore.logAction(
       'midtrans',
       'Midtrans Webhook',
@@ -113,7 +95,7 @@ export async function POST(request: Request) {
       'access_request',
       updatedOrder.accessRequestId,
       'success',
-      `Order ${updatedOrder.midtransOrderId} paid`
+      `Order ${updatedOrder.midtransOrderId} paid; waiting for owner approval`
     )
   } else if (paymentStatus === 'EXPIRED' || paymentStatus === 'FAILED') {
     await ServerDataStore.updateAccessRequest(updatedOrder.accessRequestId, {
@@ -134,6 +116,6 @@ export async function POST(request: Request) {
   return NextResponse.json({
     success: true,
     order: updatedOrder,
-    access: grantResult,
+    access: accessResult,
   })
 }
