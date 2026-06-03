@@ -4,8 +4,10 @@ import { requireCurrentUser } from '@/lib/auth-server'
 import { hasUserRole } from '@/lib/auth-types'
 import {
   applyMidtransStatusToOrder,
+  assertProductionPaymentStorage,
   getMidtransConfig,
   MidtransPaymentValidationError,
+  ProductionPaymentStorageError,
 } from '@/lib/midtrans-payments'
 import { ServerDataStore } from '@/lib/server-data-store'
 
@@ -68,7 +70,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Midtrans order not found for this access request.' }, { status: 404 })
   }
 
-  const coreApi = new midtransClient.CoreApi(getMidtransConfig())
+  const midtransConfig = getMidtransConfig()
+  try {
+    assertProductionPaymentStorage(midtransConfig)
+  } catch (error) {
+    if (error instanceof ProductionPaymentStorageError) {
+      return NextResponse.json({ error: error.message }, { status: 503 })
+    }
+    throw error
+  }
+
+  const coreApi = new midtransClient.CoreApi(midtransConfig)
   let statusResponse: Record<string, unknown>
   try {
     statusResponse = await getMidtransStatusWithRetry(coreApi, order.midtransOrderId, accessRequest.id)
@@ -87,7 +99,12 @@ export async function POST(request: Request) {
 
   let result: Awaited<ReturnType<typeof applyMidtransStatusToOrder>>
   try {
-    result = await applyMidtransStatusToOrder(statusResponse)
+    result = await applyMidtransStatusToOrder(statusResponse, {
+      actorId: currentUser.id,
+      actorName: currentUser.name,
+      actorRole: currentUser.role,
+      source: 'status',
+    })
   } catch (error) {
     if (error instanceof MidtransPaymentValidationError) {
       console.error('midtrans.status_validation_failed', {

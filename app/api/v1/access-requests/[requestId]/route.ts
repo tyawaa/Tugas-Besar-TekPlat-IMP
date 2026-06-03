@@ -7,8 +7,10 @@ import { hasUserRole } from '@/lib/auth-types'
 import { AccessGrant, AccessRequest, Order } from '@/lib/mock-data'
 import {
   applyMidtransStatusToOrder,
+  assertProductionPaymentStorage,
   getMidtransConfig,
   MidtransPaymentValidationError,
+  ProductionPaymentStorageError,
 } from '@/lib/midtrans-payments'
 import {
   canMarkPayoutEligible,
@@ -170,7 +172,17 @@ export async function POST(
           updates: markPaymentCancelled(pendingOrder, new Date().toISOString()),
         })
       } else {
-        const coreApi = new midtransClient.CoreApi(getMidtransConfig())
+        const midtransConfig = getMidtransConfig()
+        try {
+          assertProductionPaymentStorage(midtransConfig)
+        } catch (error) {
+          if (error instanceof ProductionPaymentStorageError) {
+            return NextResponse.json({ error: error.message }, { status: 503 })
+          }
+          throw error
+        }
+
+        const coreApi = new midtransClient.CoreApi(midtransConfig)
         let syncedOrder: Order
 
         try {

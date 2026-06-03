@@ -5,9 +5,10 @@ import {
   getMidtransConfig,
   getMidtransOrderId,
   getPaymentStatusFromMidtransResponse,
+  assertProductionPaymentStorage,
   MidtransPaymentValidationError,
+  ProductionPaymentStorageError,
 } from '@/lib/midtrans-payments'
-import { ServerDataStore } from '@/lib/server-data-store'
 
 export const dynamic = 'force-dynamic'
 
@@ -55,7 +56,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Midtrans notification transaction_id is required.' }, { status: 400 })
   }
 
-  const coreApi = new midtransClient.CoreApi(getMidtransConfig())
+  const midtransConfig = getMidtransConfig()
+  try {
+    assertProductionPaymentStorage(midtransConfig)
+  } catch (error) {
+    if (error instanceof ProductionPaymentStorageError) {
+      return NextResponse.json({ error: error.message }, { status: 503 })
+    }
+    throw error
+  }
+
+  const coreApi = new midtransClient.CoreApi(midtransConfig)
   let statusResponse: Record<string, unknown>
   try {
     statusResponse = await getVerifiedMidtransNotification(coreApi, notification, notificationTransactionId)
@@ -87,7 +98,12 @@ export async function POST(request: Request) {
 
   let result: Awaited<ReturnType<typeof applyMidtransStatusToOrder>>
   try {
-    result = await applyMidtransStatusToOrder(statusResponse)
+    result = await applyMidtransStatusToOrder(statusResponse, {
+      actorId: 'midtrans',
+      actorName: 'Midtrans Webhook',
+      actorRole: 'admin',
+      source: 'webhook',
+    })
   } catch (error) {
     if (error instanceof MidtransPaymentValidationError) {
       console.error('midtrans.webhook_validation_failed', {
@@ -131,90 +147,6 @@ export async function POST(request: Request) {
       order: result.order,
       access: result.access,
     })
-  }
-
-  if (result.latePaidAfterCancellation) {
-    await ServerDataStore.logAction(
-      'midtrans',
-      'Midtrans Webhook',
-      'admin',
-      'payment.late_paid_refund_required',
-      'access_request',
-      result.order.accessRequestId,
-      'success',
-      `Order ${result.order.midtransOrderId} was paid after local cancellation; manual refund review required`
-    )
-  } else if (paymentStatus === 'PAID' && result.refundRequired) {
-    await ServerDataStore.logAction(
-      'midtrans',
-      'Midtrans Webhook',
-      'admin',
-      'payment.refund_required',
-      'access_request',
-      result.order.accessRequestId,
-      'success',
-      `Order ${result.order.midtransOrderId} paid status requires manual refund review`
-    )
-  } else if (result.duplicate && paymentStatus === 'PAID' && result.accessStatusChanged) {
-    await ServerDataStore.logAction(
-      'midtrans',
-      'Midtrans Webhook',
-      'admin',
-      'payment.paid_reconciled',
-      'access_request',
-      result.order.accessRequestId,
-      'success',
-      `Order ${result.order.midtransOrderId} duplicate paid status reconciled access request`
-    )
-  } else if (paymentStatus === 'PAID') {
-    await ServerDataStore.logAction(
-      'midtrans',
-      'Midtrans Webhook',
-      'admin',
-      'payment.paid',
-      'access_request',
-      result.order.accessRequestId,
-      'success',
-      `Order ${result.order.midtransOrderId} paid; waiting for owner approval`
-    )
-  } else if (
-    paymentStatus === 'EXPIRED' ||
-    paymentStatus === 'FAILED' ||
-    paymentStatus === 'CANCELLED' ||
-    paymentStatus === 'DENIED'
-  ) {
-    await ServerDataStore.logAction(
-      'midtrans',
-      'Midtrans Webhook',
-      'admin',
-      `payment.${paymentStatus.toLowerCase()}`,
-      'access_request',
-      result.order.accessRequestId,
-      'success',
-      `Order ${result.order.midtransOrderId} ${paymentStatus.toLowerCase()}`
-    )
-  } else if (paymentStatus === 'REFUNDED' || paymentStatus === 'PARTIAL_REFUND') {
-    await ServerDataStore.logAction(
-      'midtrans',
-      'Midtrans Webhook',
-      'admin',
-      'payment.refund_status',
-      'access_request',
-      result.order.accessRequestId,
-      'success',
-      `Order ${result.order.midtransOrderId} ${paymentStatus.toLowerCase()}`
-    )
-  } else if (paymentStatus === 'CHARGEBACK' || paymentStatus === 'PARTIAL_CHARGEBACK') {
-    await ServerDataStore.logAction(
-      'midtrans',
-      'Midtrans Webhook',
-      'admin',
-      'payment.chargeback_status',
-      'access_request',
-      result.order.accessRequestId,
-      'success',
-      `Order ${result.order.midtransOrderId} ${paymentStatus.toLowerCase()}`
-    )
   }
 
   return NextResponse.json({

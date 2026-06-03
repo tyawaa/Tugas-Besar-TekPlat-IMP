@@ -7,8 +7,10 @@ import { AccessRequest, BillingSnapshot, Order } from '@/lib/mock-data'
 import { createBillingSnapshot } from '@/lib/billing-snapshot'
 import {
   applyMidtransStatusToOrder,
+  assertProductionPaymentStorage,
   getMidtransConfig,
   MidtransPaymentValidationError,
+  ProductionPaymentStorageError,
 } from '@/lib/midtrans-payments'
 import { createOrderPayoutFields } from '@/lib/order-payouts'
 import {
@@ -267,6 +269,15 @@ export async function POST(request: Request) {
   }
 
   const midtransConfig = getMidtransConfig()
+  try {
+    assertProductionPaymentStorage(midtransConfig)
+  } catch (error) {
+    if (error instanceof ProductionPaymentStorageError) {
+      return NextResponse.json({ error: error.message }, { status: 503 })
+    }
+    throw error
+  }
+
   const snap = new midtransClient.Snap(midtransConfig)
   const coreApi = new midtransClient.CoreApi(midtransConfig)
   const now = new Date().toISOString()

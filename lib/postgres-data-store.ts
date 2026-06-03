@@ -1074,6 +1074,18 @@ interface AdminOrderActionTransactionInput {
   auditLog: AuditLog
 }
 
+interface PaymentSyncState {
+  order: Order
+  accessRequest: AccessRequest | null
+}
+
+interface PaymentSyncTransactionPlan<T> {
+  orderUpdates?: Partial<Order>
+  accessRequestUpdates?: Partial<AccessRequest>
+  auditLog?: AuditLog
+  getResult: (state: PaymentSyncState) => T
+}
+
 export class PostgresDataStore {
   static async getAllUsers(): Promise<StoredUser[]> {
     const rows = await query<UserRow>('SELECT * FROM users ORDER BY created_at ASC, id ASC')
@@ -1358,6 +1370,45 @@ export class PostgresDataStore {
       )
       await addAuditLogWithClient(client, input.auditLog)
       return updatedOrder
+    })
+  }
+
+  static async runPaymentSyncTransaction<T>(
+    midtransOrderId: string,
+    buildPlan: (state: PaymentSyncState) => Promise<PaymentSyncTransactionPlan<T>>
+  ): Promise<T | null> {
+    return withTransaction(async (client) => {
+      const orderResult = await client.query<OrderRow>(
+        'SELECT * FROM orders WHERE midtrans_order_id = $1 FOR UPDATE',
+        [midtransOrderId]
+      )
+      const order = orderResult.rows[0] ? mapOrder(orderResult.rows[0]) : null
+      if (!order) return null
+
+      const accessRequest = await getAccessRequestByIdForUpdate(client, order.accessRequestId)
+      const plan = await buildPlan({ order, accessRequest })
+
+      let updatedOrder = order
+      if (plan.orderUpdates) {
+        updatedOrder = await updateOrderWithClient(client, order.id, plan.orderUpdates)
+      }
+
+      let updatedAccessRequest = accessRequest
+      if (accessRequest && plan.accessRequestUpdates) {
+        updatedAccessRequest = await upsertAccessRequestWithClient(client, {
+          ...accessRequest,
+          ...plan.accessRequestUpdates,
+        })
+      }
+
+      if (plan.auditLog) {
+        await addAuditLogWithClient(client, plan.auditLog)
+      }
+
+      return plan.getResult({
+        order: updatedOrder,
+        accessRequest: updatedAccessRequest,
+      })
     })
   }
 

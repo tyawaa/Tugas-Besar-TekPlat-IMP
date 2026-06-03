@@ -4,8 +4,12 @@ import { requireCurrentUser } from '@/lib/auth-server'
 import { hasUserRole } from '@/lib/auth-types'
 import {
   applyMidtransStatusToOrder,
+  assertProductionPaymentStorage,
   getMidtransConfig,
+  getPaymentStatusFromMidtransResponse,
   MidtransPaymentValidationError,
+  ProductionPaymentStorageError,
+  validateMidtransPaymentResponse,
 } from '@/lib/midtrans-payments'
 import { Order } from '@/lib/mock-data'
 import { ServerDataStore } from '@/lib/server-data-store'
@@ -20,9 +24,12 @@ interface ReconcileResultItem {
   orderId: string
   accessRequestId: string
   midtransOrderId: string
-  outcome: 'changed' | 'unchanged' | 'failed'
-  paymentStatus: Order['paymentStatus']
-  payoutStatus: Order['payoutStatus']
+  outcome: 'changed' | 'unchanged' | 'skipped' | 'failed'
+  beforePaymentStatus: Order['paymentStatus']
+  beforePayoutStatus: Order['payoutStatus']
+  afterPaymentStatus: Order['paymentStatus']
+  afterPayoutStatus: Order['payoutStatus']
+  midtransPaymentStatus?: Order['paymentStatus']
   error?: string
 }
 
@@ -53,6 +60,10 @@ function getLimit(body: Record<string, unknown>): number {
   const requestedLimit = getPositiveInteger(body.limit)
   if (!requestedLimit) return MAX_RECONCILE_LIMIT
   return Math.min(requestedLimit, MAX_RECONCILE_LIMIT)
+}
+
+function getDryRun(body: Record<string, unknown>): boolean {
+  return body.dryRun === true
 }
 
 function isOldPendingOrder(order: Order, cutoffTimestamp: number): boolean {
@@ -121,6 +132,7 @@ export async function POST(request: Request) {
 
   const thresholdMinutes = getThresholdMinutes(body)
   const limit = getLimit(body)
+  const dryRun = getDryRun(body)
   const cutoffTimestamp = Date.now() - thresholdMinutes * 60 * 1000
   const allOrders = await ServerDataStore.getAllOrders()
   const pendingOrders = allOrders
@@ -128,13 +140,77 @@ export async function POST(request: Request) {
     .sort((first, second) => new Date(first.createdAt).valueOf() - new Date(second.createdAt).valueOf())
     .slice(0, limit)
 
-  const coreApi = new midtransClient.CoreApi(getMidtransConfig())
+  const midtransConfig = getMidtransConfig()
+  try {
+    assertProductionPaymentStorage(midtransConfig)
+  } catch (error) {
+    if (error instanceof ProductionPaymentStorageError) {
+      return NextResponse.json({ error: error.message }, { status: 503 })
+    }
+    throw error
+  }
+
+  const coreApi = new midtransClient.CoreApi(midtransConfig)
   const results: ReconcileResultItem[] = []
 
   for (const order of pendingOrders) {
     try {
       const statusResponse = await getMidtransStatusWithRetry(coreApi, order)
-      const syncResult = await applyMidtransStatusToOrder(statusResponse)
+      const midtransPaymentStatus = getPaymentStatusFromMidtransResponse(statusResponse)
+
+      if (!midtransPaymentStatus) {
+        console.warn('midtrans.reconcile_order_skipped_unknown_status', {
+          orderId: order.id,
+          accessRequestId: order.accessRequestId,
+          midtransOrderId: order.midtransOrderId,
+          transactionStatus: typeof statusResponse.transaction_status === 'string' ? statusResponse.transaction_status : '',
+          fraudStatus: typeof statusResponse.fraud_status === 'string' ? statusResponse.fraud_status : '',
+        })
+
+        results.push({
+          orderId: order.id,
+          accessRequestId: order.accessRequestId,
+          midtransOrderId: order.midtransOrderId,
+          outcome: 'skipped',
+          beforePaymentStatus: order.paymentStatus,
+          beforePayoutStatus: order.payoutStatus,
+          afterPaymentStatus: order.paymentStatus,
+          afterPayoutStatus: order.payoutStatus,
+        })
+        continue
+      }
+
+      validateMidtransPaymentResponse(statusResponse, order)
+
+      if (dryRun) {
+        console.info('midtrans.reconcile_order_dry_run', {
+          orderId: order.id,
+          accessRequestId: order.accessRequestId,
+          midtransOrderId: order.midtransOrderId,
+          beforePaymentStatus: order.paymentStatus,
+          midtransPaymentStatus,
+        })
+
+        results.push({
+          orderId: order.id,
+          accessRequestId: order.accessRequestId,
+          midtransOrderId: order.midtransOrderId,
+          outcome: 'skipped',
+          beforePaymentStatus: order.paymentStatus,
+          beforePayoutStatus: order.payoutStatus,
+          afterPaymentStatus: order.paymentStatus,
+          afterPayoutStatus: order.payoutStatus,
+          midtransPaymentStatus,
+        })
+        continue
+      }
+
+      const syncResult = await applyMidtransStatusToOrder(statusResponse, {
+        actorId: currentUser.id,
+        actorName: currentUser.name,
+        actorRole: currentUser.role,
+        source: 'reconcile',
+      })
       const latestOrder = syncResult?.order || order
       const outcome = getResultOutcome(syncResult)
 
@@ -143,30 +219,23 @@ export async function POST(request: Request) {
         accessRequestId: order.accessRequestId,
         midtransOrderId: order.midtransOrderId,
         outcome,
-        paymentStatus: latestOrder.paymentStatus,
-        payoutStatus: latestOrder.payoutStatus,
+        beforePaymentStatus: order.paymentStatus,
+        beforePayoutStatus: order.payoutStatus,
+        afterPaymentStatus: latestOrder.paymentStatus,
+        afterPayoutStatus: latestOrder.payoutStatus,
+        midtransPaymentStatus,
       })
-
-      if (outcome === 'changed') {
-        await ServerDataStore.logAction(
-          currentUser.id,
-          currentUser.name,
-          currentUser.role,
-          'payment.reconciled',
-          'access_request',
-          latestOrder.accessRequestId,
-          'success',
-          `Order ${latestOrder.midtransOrderId} reconciled to ${latestOrder.paymentStatus}`
-        )
-      }
 
       results.push({
         orderId: latestOrder.id,
         accessRequestId: latestOrder.accessRequestId,
         midtransOrderId: latestOrder.midtransOrderId,
         outcome,
-        paymentStatus: latestOrder.paymentStatus,
-        payoutStatus: latestOrder.payoutStatus,
+        beforePaymentStatus: order.paymentStatus,
+        beforePayoutStatus: order.payoutStatus,
+        afterPaymentStatus: latestOrder.paymentStatus,
+        afterPayoutStatus: latestOrder.payoutStatus,
+        midtransPaymentStatus,
       })
     } catch (error) {
       const validationContext = error instanceof MidtransPaymentValidationError ? error.context : undefined
@@ -183,23 +252,40 @@ export async function POST(request: Request) {
         accessRequestId: order.accessRequestId,
         midtransOrderId: order.midtransOrderId,
         outcome: 'failed',
-        paymentStatus: order.paymentStatus,
-        payoutStatus: order.payoutStatus,
+        beforePaymentStatus: order.paymentStatus,
+        beforePayoutStatus: order.payoutStatus,
+        afterPaymentStatus: order.paymentStatus,
+        afterPayoutStatus: order.payoutStatus,
         error: error instanceof Error ? error.message : String(error),
       })
     }
   }
 
   const changed = results.filter(result => result.outcome === 'changed').length
+  const skipped = results.filter(result => result.outcome === 'skipped').length
   const failed = results.filter(result => result.outcome === 'failed').length
+  const unchanged = results.length - changed - skipped - failed
+
+  console.info('midtrans.reconcile_summary', {
+    thresholdMinutes,
+    limit,
+    dryRun,
+    checked: results.length,
+    changed,
+    unchanged,
+    skipped,
+    failed,
+  })
 
   return NextResponse.json({
     thresholdMinutes,
     limit,
+    dryRun,
     cutoff: new Date(cutoffTimestamp).toISOString(),
     checked: results.length,
     changed,
-    unchanged: results.length - changed - failed,
+    unchanged,
+    skipped,
     failed,
     results,
   })

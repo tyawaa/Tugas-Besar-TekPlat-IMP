@@ -53,7 +53,7 @@ interface OrderUpdateOperation {
   updates: Partial<Order>
 }
 
-interface AuditLogInput {
+export interface AuditLogInput {
   actorId: string
   actorName: string
   actorRole: UserRole
@@ -88,6 +88,18 @@ interface AdminOrderActionInput {
   orderId: string
   updates: Partial<Order>
   auditLog: AuditLogInput
+}
+
+export interface PaymentSyncState {
+  order: Order
+  accessRequest: AccessRequest | null
+}
+
+export interface PaymentSyncPlan<T> {
+  orderUpdates?: Partial<Order>
+  accessRequestUpdates?: Partial<AccessRequest>
+  auditLog?: AuditLogInput
+  getResult: (state: PaymentSyncState) => T
 }
 
 function ensureDataDir() {
@@ -640,6 +652,52 @@ export class ServerDataStore {
     if (!updatedOrder) throw new Error(`Failed to mark order ${input.orderId} refunded.`)
     await this.addAuditLog(auditLog)
     return updatedOrder
+  }
+
+  static async runPaymentSyncOperation<T>(
+    midtransOrderId: string,
+    buildPlan: (state: PaymentSyncState) => Promise<PaymentSyncPlan<T>>
+  ): Promise<T | null> {
+    if (isPostgresConfigured()) {
+      return PostgresDataStore.runPaymentSyncTransaction(midtransOrderId, async (state) => {
+        const plan = await buildPlan(state)
+        return {
+          ...plan,
+          auditLog: plan.auditLog ? createAuditLog(plan.auditLog) : undefined,
+        }
+      })
+    }
+
+    const order = await this.getOrderByMidtransOrderId(midtransOrderId)
+    if (!order) return null
+
+    const accessRequest = await this.getAccessRequestById(order.accessRequestId)
+    const plan = await buildPlan({ order, accessRequest })
+
+    let updatedOrder = order
+    if (plan.orderUpdates) {
+      const orderUpdate = await this.updateOrder(order.id, plan.orderUpdates)
+      if (!orderUpdate) throw new Error(`Failed to update order ${order.id} during payment sync.`)
+      updatedOrder = orderUpdate
+    }
+
+    let updatedAccessRequest = accessRequest
+    if (accessRequest && plan.accessRequestUpdates) {
+      const requestUpdate = await this.updateAccessRequest(accessRequest.id, plan.accessRequestUpdates)
+      if (!requestUpdate) {
+        throw new Error(`Failed to update access request ${accessRequest.id} during payment sync.`)
+      }
+      updatedAccessRequest = requestUpdate
+    }
+
+    if (plan.auditLog) {
+      await this.addAuditLog(createAuditLog(plan.auditLog))
+    }
+
+    return plan.getResult({
+      order: updatedOrder,
+      accessRequest: updatedAccessRequest,
+    })
   }
 
   static async getAllTelemetry(): Promise<TelemetryRecord[]> {
