@@ -15,10 +15,6 @@ function getOrderTotal(value: unknown): number | null {
   return Math.round(amount)
 }
 
-function getSnapRedirectUrl(token: string) {
-  return `https://app.sandbox.midtrans.com/snap/v2/vtweb/${token}`
-}
-
 function createMidtransOrderId(): string {
   const randomSuffix = Math.random().toString(36).substring(2, 10)
   return `iot-${Date.now()}-${randomSuffix}`

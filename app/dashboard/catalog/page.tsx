@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { DashboardLayout, StatusBadge } from '@/components/layout/dashboard-layout'
 import { Card, CardContent } from '@/components/ui/card'
@@ -40,6 +40,11 @@ import { HealthBadge } from '@/components/devices/health-badge'
 import { cancelAccessRequest, createAccessRequest, createMidtransPaymentToken, getAccessGrants, getAccessRequests, getDevices, syncMidtransPaymentStatus } from '@/lib/api'
 
 const PAYMENT_SYNC_DELAYS_MS = [1500, 4000, 8000, 15000]
+const MIDTRANS_IS_PRODUCTION =
+  (process.env.NEXT_PUBLIC_MIDTRANS_IS_PRODUCTION || process.env.VITE_MIDTRANS_IS_PRODUCTION) === 'true'
+const MIDTRANS_SNAP_SCRIPT_URL = MIDTRANS_IS_PRODUCTION
+  ? 'https://app.midtrans.com/snap/snap.js'
+  : 'https://app.sandbox.midtrans.com/snap/snap.js'
 
 declare global {
   interface Window {
@@ -64,13 +69,15 @@ export default function CatalogPage() {
   const [paymentMessage, setPaymentMessage] = useState('')
   const [purpose, setPurpose] = useState('')
   const [requestedUntil, setRequestedUntil] = useState('')
+  const paymentSyncTimeoutsRef = useRef<number[]>([])
+  const resolvedPaymentRequestIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     const clientKey = process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY || process.env.VITE_MIDTRANS_CLIENT_KEY
     if (!clientKey || document.querySelector('script[data-iotbridge-midtrans="snap"]')) return
 
     const script = document.createElement('script')
-    script.src = 'https://app.sandbox.midtrans.com/snap/snap.js'
+    script.src = MIDTRANS_SNAP_SCRIPT_URL
     script.async = true
     script.dataset.iotbridgeMidtrans = 'snap'
     script.setAttribute('data-client-key', clientKey)
@@ -97,6 +104,19 @@ export default function CatalogPage() {
   useEffect(() => {
     loadCatalogData()
   }, [loadCatalogData])
+
+  const clearPaymentStatusSync = useCallback((): void => {
+    paymentSyncTimeoutsRef.current.forEach((timeoutId) => {
+      window.clearTimeout(timeoutId)
+    })
+    paymentSyncTimeoutsRef.current = []
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      clearPaymentStatusSync()
+    }
+  }, [clearPaymentStatusSync])
 
   const filteredDevices = catalogDevices.filter((device) => {
     const matchesSearch =
@@ -147,16 +167,22 @@ export default function CatalogPage() {
   }
 
   const syncPaymentStatus = useCallback(async (request: AccessRequest): Promise<boolean> => {
+    if (resolvedPaymentRequestIdRef.current === request.id) return true
+
     try {
       const result = await syncMidtransPaymentStatus({ accessRequestId: request.id })
       await loadCatalogData()
 
       if (result.order.paymentStatus === 'PAID') {
+        resolvedPaymentRequestIdRef.current = request.id
+        clearPaymentStatusSync()
         setPaymentMessage('Payment confirmed. Waiting for owner approval.')
         return true
       }
 
       if (result.order.paymentStatus === 'FAILED' || result.order.paymentStatus === 'EXPIRED') {
+        resolvedPaymentRequestIdRef.current = request.id
+        clearPaymentStatusSync()
         setPaymentMessage('Payment is no longer active. Please submit a new access request.')
         return true
       }
@@ -166,15 +192,22 @@ export default function CatalogPage() {
       console.error('Failed to sync Midtrans payment status', error)
       return false
     }
-  }, [loadCatalogData])
+  }, [clearPaymentStatusSync, loadCatalogData])
 
   const schedulePaymentStatusSync = useCallback((request: AccessRequest): void => {
+    clearPaymentStatusSync()
+    resolvedPaymentRequestIdRef.current = null
+
     PAYMENT_SYNC_DELAYS_MS.forEach((delayMs) => {
-      window.setTimeout(() => {
+      const timeoutId = window.setTimeout(() => {
+        paymentSyncTimeoutsRef.current = paymentSyncTimeoutsRef.current.filter((currentId) => currentId !== timeoutId)
+        if (resolvedPaymentRequestIdRef.current === request.id) return
+
         void syncPaymentStatus(request)
       }, delayMs)
+      paymentSyncTimeoutsRef.current = [...paymentSyncTimeoutsRef.current, timeoutId]
     })
-  }, [syncPaymentStatus])
+  }, [clearPaymentStatusSync, syncPaymentStatus])
 
   const openMidtransPayment = async (request: AccessRequest, device: Device): Promise<void> => {
     if (!userName || !userEmail) return

@@ -10,6 +10,8 @@ const nextConfig = {
   },
   env: {
     VITE_MIDTRANS_CLIENT_KEY: process.env.VITE_MIDTRANS_CLIENT_KEY || process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY || '',
+    VITE_MIDTRANS_IS_PRODUCTION:
+      process.env.VITE_MIDTRANS_IS_PRODUCTION || process.env.NEXT_PUBLIC_MIDTRANS_IS_PRODUCTION || '',
   },
 }
 

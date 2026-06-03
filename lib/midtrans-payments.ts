@@ -16,6 +16,15 @@ export interface PaymentOrderSyncResult {
   access: PaymentAccessSyncResult | null
 }
 
+function getMidtransIsProduction(): boolean {
+  const rawValue = process.env.MIDTRANS_IS_PRODUCTION
+  if (!rawValue) return false
+  if (rawValue === 'true') return true
+  if (rawValue === 'false') return false
+
+  throw new Error('MIDTRANS_IS_PRODUCTION must be either "true" or "false".')
+}
+
 export function getMidtransConfig(): MidtransConfig {
   const serverKey = process.env.MIDTRANS_SERVER_KEY
   const clientKey = process.env.MIDTRANS_CLIENT_KEY || process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY
@@ -25,7 +34,7 @@ export function getMidtransConfig(): MidtransConfig {
   }
 
   return {
-    isProduction: false,
+    isProduction: getMidtransIsProduction(),
     serverKey,
     clientKey,
   }
