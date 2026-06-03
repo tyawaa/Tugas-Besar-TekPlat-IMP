@@ -224,7 +224,7 @@ export default function CatalogPage() {
       await openMidtransPayment(request, device)
     } catch (error) {
       console.error('Failed to create Midtrans payment token', error)
-      setPaymentMessage('Failed to open Midtrans payment. Please try again.')
+      setPaymentMessage(error instanceof Error ? error.message : 'Failed to open Midtrans payment. Please try again.')
     } finally {
       setUpdatingDeviceId(null)
     }
@@ -241,7 +241,7 @@ export default function CatalogPage() {
       await openMidtransPayment(request, device)
     } catch (error) {
       console.error('Failed to retry Midtrans payment', error)
-      setPaymentMessage('Failed to open Midtrans payment. Please try again.')
+      setPaymentMessage(error instanceof Error ? error.message : 'Failed to open Midtrans payment. Please try again.')
     } finally {
       setUpdatingDeviceId(null)
     }

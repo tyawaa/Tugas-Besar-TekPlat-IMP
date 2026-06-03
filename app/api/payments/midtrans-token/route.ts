@@ -18,9 +18,9 @@ function getSnapRedirectUrl(token: string) {
   return `https://app.sandbox.midtrans.com/snap/v2/vtweb/${token}`
 }
 
-function createMidtransOrderId(accessRequestId: string): string {
-  const randomSuffix = Math.random().toString(36).substring(2, 8)
-  return `iotbridge-${accessRequestId}-${Date.now()}-${randomSuffix}`
+function createMidtransOrderId(): string {
+  const randomSuffix = Math.random().toString(36).substring(2, 10)
+  return `iot-${Date.now()}-${randomSuffix}`
 }
 
 export async function POST(request: Request) {
@@ -85,7 +85,7 @@ export async function POST(request: Request) {
     )
   }
 
-  const midtransOrderId = createMidtransOrderId(accessRequest.id)
+  const midtransOrderId = createMidtransOrderId()
   const order: Order = {
     id: existingOrder?.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
     accessRequestId: accessRequest.id,
