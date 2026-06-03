@@ -415,6 +415,8 @@ export class ServerDataStore {
 
   static async addOrder(order: Order): Promise<Order> {
     if (isPostgresConfigured()) return PostgresDataStore.addOrder(order)
+    // JSON/Redis demo storage cannot enforce the Postgres partial unique index
+    // that protects one active PENDING payment per access request in production.
     const orders = await this.getAllOrders()
     orders.push(order)
     await this.writeOrders(orders)

@@ -1,6 +1,25 @@
 -- Retry payment is represented by multiple rows in orders for one access_request_id.
 -- This migration does not create a separate payment_attempts table.
 -- Existing Midtrans callbacks continue to match the correct local attempt via midtrans_order_id.
+-- Production precheck before creating the partial unique index:
+-- SELECT access_request_id, COUNT(*) AS pending_count
+-- FROM orders
+-- WHERE payment_status = 'PENDING'
+-- GROUP BY access_request_id
+-- HAVING COUNT(*) > 1;
+--
+-- Detail affected orders without mutating payment data:
+-- SELECT id, access_request_id, midtrans_order_id, created_at, updated_at
+-- FROM orders
+-- WHERE access_request_id IN (
+--   SELECT access_request_id
+--   FROM orders
+--   WHERE payment_status = 'PENDING'
+--   GROUP BY access_request_id
+--   HAVING COUNT(*) > 1
+-- )
+-- AND payment_status = 'PENDING'
+-- ORDER BY access_request_id, created_at DESC, id DESC;
 
 ALTER TABLE access_requests
   ADD COLUMN IF NOT EXISTS billing_snapshot JSONB;

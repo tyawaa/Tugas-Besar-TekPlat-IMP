@@ -310,6 +310,8 @@ async function createTables(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_access_requests_developer_id ON access_requests (developer_id);
     CREATE INDEX IF NOT EXISTS idx_orders_access_request_id ON orders (access_request_id);
     CREATE INDEX IF NOT EXISTS idx_orders_midtrans_order_id ON orders (midtrans_order_id);
+    -- Production payment safety depends on this Postgres-only guard. Existing
+    -- duplicate PENDING rows must be reviewed before this index can be applied.
     CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_one_pending_per_access_request
       ON orders (access_request_id)
       WHERE payment_status = 'PENDING';

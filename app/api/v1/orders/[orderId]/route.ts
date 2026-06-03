@@ -45,6 +45,8 @@ export async function POST(
       )
     }
 
+    // TODO: when ServerDataStore supports transactions, commit payout status
+    // and the audit log together so admin settlement history is atomic.
     const updatedOrder = await ServerDataStore.updateOrder(order.id, {
       payoutStatus: 'PAID_OUT',
       paidOutAt: new Date().toISOString(),
@@ -83,6 +85,8 @@ export async function POST(
       )
     }
 
+    // TODO: when ServerDataStore supports transactions, commit manual refund
+    // completion and the audit log together so refund history is atomic.
     const updatedOrder = await ServerDataStore.updateOrder(order.id, {
       payoutStatus: 'REFUNDED',
     })
