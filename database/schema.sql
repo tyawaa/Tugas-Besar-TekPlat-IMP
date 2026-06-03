@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS access_requests (
   scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
   requested_until TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('pending', 'pending_payment', 'approved', 'rejected', 'revoked', 'cancelled')),
+  billing_snapshot JSONB,
   created_at TEXT NOT NULL
 );
 
@@ -76,13 +77,18 @@ CREATE TABLE IF NOT EXISTS orders (
   total_amount INTEGER NOT NULL,
   currency TEXT NOT NULL DEFAULT 'IDR',
   payment_method TEXT,
-  payment_status TEXT NOT NULL CHECK (payment_status IN ('PENDING', 'PAID', 'FAILED', 'EXPIRED')),
+  payment_status TEXT NOT NULL CHECK (payment_status IN (
+    'PENDING', 'PAID', 'FAILED', 'EXPIRED', 'CANCELLED', 'DENIED',
+    'REFUNDED', 'PARTIAL_REFUND', 'CHARGEBACK', 'PARTIAL_CHARGEBACK'
+  )),
   payout_status TEXT NOT NULL DEFAULT 'NOT_ELIGIBLE' CHECK (payout_status IN ('NOT_ELIGIBLE', 'ELIGIBLE', 'PAID_OUT', 'REFUND_REQUIRED', 'REFUNDED')),
   platform_fee INTEGER NOT NULL DEFAULT 0,
   owner_amount INTEGER NOT NULL DEFAULT 0,
   paid_out_at TEXT,
   snap_token TEXT,
+  snap_redirect_url TEXT,
   midtrans_order_id TEXT NOT NULL UNIQUE,
+  billing_snapshot JSONB,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

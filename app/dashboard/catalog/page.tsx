@@ -40,6 +40,7 @@ import { HealthBadge } from '@/components/devices/health-badge'
 import { cancelAccessRequest, createAccessRequest, createMidtransPaymentToken, getAccessGrants, getAccessRequests, getDevices, syncMidtransPaymentStatus } from '@/lib/api'
 
 const PAYMENT_SYNC_DELAYS_MS = [1500, 4000, 8000, 15000]
+const RETRYABLE_TERMINAL_PAYMENT_STATUSES = ['FAILED', 'EXPIRED', 'CANCELLED', 'DENIED'] as const
 const MIDTRANS_IS_PRODUCTION =
   (process.env.NEXT_PUBLIC_MIDTRANS_IS_PRODUCTION || process.env.VITE_MIDTRANS_IS_PRODUCTION) === 'true'
 const MIDTRANS_SNAP_SCRIPT_URL = MIDTRANS_IS_PRODUCTION
@@ -180,11 +181,11 @@ export default function CatalogPage() {
         return true
       }
 
-      if (result.order.paymentStatus === 'FAILED' || result.order.paymentStatus === 'EXPIRED') {
+      if (RETRYABLE_TERMINAL_PAYMENT_STATUSES.includes(result.order.paymentStatus as typeof RETRYABLE_TERMINAL_PAYMENT_STATUSES[number])) {
         resolvedPaymentRequestIdRef.current = request.id
         clearPaymentStatusSync()
-        setPaymentMessage('Payment is no longer active. Please submit a new access request.')
-        return true
+        setPaymentMessage('Payment attempt is no longer active. You can retry payment from this catalog card.')
+        return false
       }
 
       return false
@@ -267,6 +268,7 @@ export default function CatalogPage() {
     try {
       setUpdatingDeviceId(device.id)
       setPaymentMessage('Checking payment status...')
+      resolvedPaymentRequestIdRef.current = null
       const alreadyResolved = await syncPaymentStatus(request)
       if (alreadyResolved) return
 
@@ -286,7 +288,11 @@ export default function CatalogPage() {
       setPaymentMessage('Cancelling pending payment request...')
       const result = await cancelAccessRequest(request.id)
       setAccessRequests(current => current.map(item => item.id === result.request.id ? result.request : item))
-      setPaymentMessage('Pending payment cancelled. You can request access again whenever you want.')
+      setPaymentMessage(
+        result.refundRequired
+          ? 'Payment was already completed. The request was cancelled and marked for refund review.'
+          : 'Pending payment cancelled. You can request access again whenever you want.'
+      )
     } catch (error) {
       console.error('Failed to cancel pending payment', error)
       setPaymentMessage('Failed to cancel pending payment. Please try again.')

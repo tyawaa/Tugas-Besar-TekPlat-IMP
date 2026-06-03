@@ -5,6 +5,7 @@ import { hasUserRole } from '@/lib/auth-types'
 import {
   applyMidtransStatusToOrder,
   getMidtransConfig,
+  MidtransPaymentValidationError,
 } from '@/lib/midtrans-payments'
 import { ServerDataStore } from '@/lib/server-data-store'
 
@@ -79,15 +80,40 @@ export async function POST(request: Request) {
           accessRequestId: accessRequest.id,
           midtransOrderId: order.midtransOrderId,
         },
-        detail: error instanceof Error ? error.message : String(error),
       },
       { status: 502 }
     )
   }
 
-  const result = await applyMidtransStatusToOrder(statusResponse)
+  let result: Awaited<ReturnType<typeof applyMidtransStatusToOrder>>
+  try {
+    result = await applyMidtransStatusToOrder(statusResponse)
+  } catch (error) {
+    if (error instanceof MidtransPaymentValidationError) {
+      console.error('midtrans.status_validation_failed', {
+        accessRequestId: accessRequest.id,
+        midtransOrderId: order.midtransOrderId,
+        validationContext: error.context,
+      })
+      return NextResponse.json({ error: 'Midtrans payment data failed validation.' }, { status: 400 })
+    }
+
+    console.error('midtrans.status_apply_failed', {
+      accessRequestId: accessRequest.id,
+      midtransOrderId: order.midtransOrderId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return NextResponse.json({ error: 'Failed to apply Midtrans payment status.' }, { status: 500 })
+  }
+
   if (!result) {
-    return NextResponse.json({ error: 'Midtrans status response did not match a local order.' }, { status: 404 })
+    console.warn('midtrans.status_apply_ignored', {
+      accessRequestId: accessRequest.id,
+      midtransOrderId: order.midtransOrderId,
+      responseOrderId: typeof statusResponse.order_id === 'string' ? statusResponse.order_id : '',
+      transactionStatus: typeof statusResponse.transaction_status === 'string' ? statusResponse.transaction_status : '',
+    })
+    return NextResponse.json({ error: 'Midtrans status response could not be applied.' }, { status: 422 })
   }
 
   return NextResponse.json(result)

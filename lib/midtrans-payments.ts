@@ -1,4 +1,17 @@
 import { AccessRequest, Order, PaymentStatus } from './mock-data'
+import {
+  canMarkRefundRequired,
+  canTransitionAccessRequestStatus,
+  canTransitionOrderStatus,
+  getPayoutStatusAfterPaymentSync,
+  isUnpaidTerminalPaymentStatus,
+  markPaymentCancelled,
+  markPaymentDenied,
+  markPaymentExpired,
+  markPaymentFailed,
+  markPaymentPaid,
+  markRefundRequired,
+} from './payment-state'
 import { ServerDataStore } from './server-data-store'
 
 interface MidtransConfig {
@@ -14,6 +27,16 @@ export interface PaymentAccessSyncResult {
 export interface PaymentOrderSyncResult {
   order: Order
   access: PaymentAccessSyncResult | null
+}
+
+export class MidtransPaymentValidationError extends Error {
+  context: Record<string, unknown>
+
+  constructor(message: string, context: Record<string, unknown>) {
+    super(message)
+    this.name = 'MidtransPaymentValidationError'
+    this.context = context
+  }
 }
 
 function getMidtransIsProduction(): boolean {
@@ -41,7 +64,7 @@ export function getMidtransConfig(): MidtransConfig {
 }
 
 function asString(value: unknown): string {
-  return typeof value === 'string' ? value : ''
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 export function getMidtransOrderId(statusResponse: Record<string, unknown>): string {
@@ -50,10 +73,20 @@ export function getMidtransOrderId(statusResponse: Record<string, unknown>): str
 
 export function mapPaymentStatus(transactionStatus: string, fraudStatus: string): PaymentStatus | null {
   if (transactionStatus === 'settlement') return 'PAID'
-  if (transactionStatus === 'capture') return fraudStatus === 'accept' ? 'PAID' : 'PENDING'
+  if (transactionStatus === 'capture') {
+    if (fraudStatus === 'accept') return 'PAID'
+    if (fraudStatus === 'deny') return 'DENIED'
+    return 'PENDING'
+  }
   if (transactionStatus === 'pending') return 'PENDING'
   if (transactionStatus === 'expire') return 'EXPIRED'
-  if (transactionStatus === 'cancel' || transactionStatus === 'deny') return 'FAILED'
+  if (transactionStatus === 'cancel') return 'CANCELLED'
+  if (transactionStatus === 'deny') return 'DENIED'
+  if (transactionStatus === 'failure') return 'FAILED'
+  if (transactionStatus === 'refund') return 'REFUNDED'
+  if (transactionStatus === 'partial_refund') return 'PARTIAL_REFUND'
+  if (transactionStatus === 'chargeback') return 'CHARGEBACK'
+  if (transactionStatus === 'partial_chargeback') return 'PARTIAL_CHARGEBACK'
   return null
 }
 
@@ -68,7 +101,7 @@ async function markRequestReadyForOwnerApproval(order: Order): Promise<PaymentAc
   const accessRequest = await ServerDataStore.getAccessRequestById(order.accessRequestId)
   if (!accessRequest) return { request: null }
 
-  if (accessRequest.status !== 'pending_payment') {
+  if (!canTransitionAccessRequestStatus(accessRequest.status, 'pending')) {
     return { request: accessRequest }
   }
 
@@ -76,16 +109,109 @@ async function markRequestReadyForOwnerApproval(order: Order): Promise<PaymentAc
   return { request: updatedRequest }
 }
 
-async function cancelRequestWaitingForPayment(order: Order): Promise<PaymentAccessSyncResult> {
-  const accessRequest = await ServerDataStore.getAccessRequestById(order.accessRequestId)
-  if (!accessRequest) return { request: null }
+function getMidtransGrossAmount(value: unknown): number | null {
+  const amount = Number(value)
+  if (!Number.isFinite(amount) || amount < 0) return null
+  return Math.round(amount)
+}
 
-  if (accessRequest.status !== 'pending_payment') {
-    return { request: accessRequest }
+function getPaymentUpdate(
+  order: Order,
+  paymentStatus: PaymentStatus,
+  paymentMethod: string,
+  updatedAt: string
+): Partial<Order> {
+  const payoutStatus = getPayoutStatusAfterPaymentSync(order.payoutStatus, paymentStatus)
+
+  if (paymentStatus === 'PAID') {
+    return {
+      ...markPaymentPaid(order, paymentMethod, updatedAt),
+      payoutStatus,
+    }
   }
 
-  const updatedRequest = await ServerDataStore.updateAccessRequest(accessRequest.id, { status: 'cancelled' })
-  return { request: updatedRequest }
+  if (paymentStatus === 'EXPIRED') {
+    return {
+      ...markPaymentExpired(order, updatedAt),
+      payoutStatus,
+    }
+  }
+
+  if (paymentStatus === 'CANCELLED') {
+    return {
+      ...markPaymentCancelled(order, updatedAt),
+      payoutStatus,
+    }
+  }
+
+  if (paymentStatus === 'DENIED') {
+    return {
+      ...markPaymentDenied(order, updatedAt),
+      payoutStatus,
+    }
+  }
+
+  if (paymentStatus === 'FAILED') {
+    return {
+      ...markPaymentFailed(order, updatedAt),
+      payoutStatus,
+    }
+  }
+
+  return {
+    paymentStatus,
+    paymentMethod: paymentMethod || order.paymentMethod,
+    payoutStatus,
+    updatedAt,
+  }
+}
+
+function validateMidtransPaymentResponse(statusResponse: Record<string, unknown>, order: Order): void {
+  const midtransOrderId = getMidtransOrderId(statusResponse)
+  const grossAmount = getMidtransGrossAmount(statusResponse.gross_amount)
+  const currency = asString(statusResponse.currency).toUpperCase()
+
+  if (midtransOrderId !== order.midtransOrderId) {
+    throw new MidtransPaymentValidationError('Midtrans order_id does not match the local order.', {
+      orderId: order.id,
+      localMidtransOrderId: order.midtransOrderId,
+      responseMidtransOrderId: midtransOrderId,
+    })
+  }
+
+  if (grossAmount === null || grossAmount !== order.totalAmount) {
+    throw new MidtransPaymentValidationError('Midtrans gross_amount does not match the local order amount.', {
+      orderId: order.id,
+      midtransOrderId,
+      expectedAmount: order.totalAmount,
+      grossAmount: statusResponse.gross_amount,
+    })
+  }
+
+  if (currency && currency !== order.currency.toUpperCase()) {
+    throw new MidtransPaymentValidationError('Midtrans currency does not match the local order currency.', {
+      orderId: order.id,
+      midtransOrderId,
+      expectedCurrency: order.currency,
+      currency,
+    })
+  }
+}
+
+async function markPaidCancelledOrRejectedRequestAsRefundRequired(order: Order): Promise<Order> {
+  const accessRequest = await ServerDataStore.getAccessRequestById(order.accessRequestId)
+  if (!accessRequest || (accessRequest.status !== 'cancelled' && accessRequest.status !== 'rejected')) {
+    return order
+  }
+
+  if (!canMarkRefundRequired(order)) return order
+
+  const updatedOrder = await ServerDataStore.updateOrder(order.id, markRefundRequired(order, new Date().toISOString()))
+  if (!updatedOrder) {
+    throw new Error(`Failed to mark refund required for order ${order.id}.`)
+  }
+
+  return updatedOrder
 }
 
 export async function applyMidtransStatusToOrder(
@@ -93,35 +219,80 @@ export async function applyMidtransStatusToOrder(
 ): Promise<PaymentOrderSyncResult | null> {
   const midtransOrderId = getMidtransOrderId(statusResponse)
   const paymentStatus = getPaymentStatusFromMidtransResponse(statusResponse)
+  const transactionStatus = asString(statusResponse.transaction_status)
+  const fraudStatus = asString(statusResponse.fraud_status)
 
-  if (!midtransOrderId || !paymentStatus) return null
+  console.info('midtrans.status_received', {
+    midtransOrderId,
+    transactionStatus,
+    fraudStatus,
+  })
+
+  if (!midtransOrderId) return null
+
+  if (!paymentStatus) {
+    console.warn('midtrans.status_ignored_unknown', {
+      midtransOrderId,
+      transactionStatus,
+      fraudStatus,
+    })
+    return null
+  }
 
   const order = await ServerDataStore.getOrderByMidtransOrderId(midtransOrderId)
+  console.info('midtrans.local_order_lookup', {
+    midtransOrderId,
+    found: Boolean(order),
+    orderId: order?.id,
+  })
+
   if (!order) return null
 
+  validateMidtransPaymentResponse(statusResponse, order)
+
+  if (order.paymentStatus === paymentStatus) {
+    console.info('midtrans.status_duplicate', {
+      orderId: order.id,
+      midtransOrderId,
+      paymentStatus,
+    })
+  }
+
+  if (!canTransitionOrderStatus(order.paymentStatus, paymentStatus)) {
+    console.warn('midtrans.status_transition_ignored', {
+      orderId: order.id,
+      midtransOrderId,
+      currentPaymentStatus: order.paymentStatus,
+      nextPaymentStatus: paymentStatus,
+    })
+    return {
+      order,
+      access: null,
+    }
+  }
+
   const paymentType = asString(statusResponse.payment_type)
-  const updatedOrder = await ServerDataStore.updateOrder(order.id, {
-    paymentStatus,
-    payoutStatus: paymentStatus === 'PAID' ? 'NOT_ELIGIBLE' : order.payoutStatus,
-    paymentMethod: paymentType || order.paymentMethod,
-    updatedAt: new Date().toISOString(),
-  })
+  const updatedOrder = await ServerDataStore.updateOrder(
+    order.id,
+    getPaymentUpdate(order, paymentStatus, paymentType, new Date().toISOString())
+  )
 
   if (!updatedOrder) {
     throw new Error(`Failed to update order ${order.id} for Midtrans order ${midtransOrderId}.`)
   }
 
   if (paymentStatus === 'PAID') {
+    const reconciledOrder = await markPaidCancelledOrRejectedRequestAsRefundRequired(updatedOrder)
     return {
-      order: updatedOrder,
-      access: await markRequestReadyForOwnerApproval(updatedOrder),
+      order: reconciledOrder,
+      access: await markRequestReadyForOwnerApproval(reconciledOrder),
     }
   }
 
-  if (paymentStatus === 'EXPIRED' || paymentStatus === 'FAILED') {
+  if (isUnpaidTerminalPaymentStatus(paymentStatus)) {
     return {
       order: updatedOrder,
-      access: await cancelRequestWaitingForPayment(updatedOrder),
+      access: null,
     }
   }
 

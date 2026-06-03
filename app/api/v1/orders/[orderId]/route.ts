@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { requireCurrentUser } from '@/lib/auth-server'
 import { hasUserRole } from '@/lib/auth-types'
 import { ServerDataStore } from '@/lib/server-data-store'
+import { canMarkPayoutPaidOut, canMarkRefundCompleted } from '@/lib/payment-state'
 
 export async function POST(
   request: Request,
@@ -30,7 +31,7 @@ export async function POST(
   }
 
   if (action === 'markPaidOut') {
-    if (order.paymentStatus !== 'PAID' || order.payoutStatus !== 'ELIGIBLE') {
+    if (!canMarkPayoutPaidOut(order)) {
       return NextResponse.json(
         {
           error: 'Only paid orders that are eligible for payout can be marked as paid out.',
@@ -68,12 +69,13 @@ export async function POST(
   }
 
   if (action === 'markRefunded') {
-    if (order.payoutStatus !== 'REFUND_REQUIRED') {
+    if (!canMarkRefundCompleted(order)) {
       return NextResponse.json(
         {
-          error: 'Only orders that require refund can be marked as refunded.',
+          error: 'Only orders under manual refund tracking can be marked as refunded.',
           context: {
             orderId: order.id,
+            paymentStatus: order.paymentStatus,
             payoutStatus: order.payoutStatus,
           },
         },

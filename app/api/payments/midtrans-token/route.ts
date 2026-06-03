@@ -3,13 +3,25 @@ import midtransClient from 'midtrans-client'
 import { requireCurrentUser } from '@/lib/auth-server'
 import { ServerDataStore } from '@/lib/server-data-store'
 import { hasUserRole } from '@/lib/auth-types'
-import { Order } from '@/lib/mock-data'
-import { getMidtransConfig } from '@/lib/midtrans-payments'
+import { AccessRequest, BillingSnapshot, Order } from '@/lib/mock-data'
+import { createBillingSnapshot } from '@/lib/billing-snapshot'
+import {
+  applyMidtransStatusToOrder,
+  getMidtransConfig,
+  MidtransPaymentValidationError,
+} from '@/lib/midtrans-payments'
 import { createOrderPayoutFields } from '@/lib/order-payouts'
+import {
+  getPaidOrders,
+  getReusablePendingOrder,
+  isPaidOrLaterPaymentStatus,
+} from '@/lib/payment-state'
 
 export const dynamic = 'force-dynamic'
 
-function getOrderTotal(value: unknown): number | null {
+const MIDTRANS_STATUS_RETRY_ATTEMPTS = [1, 2]
+
+function getClientSubmittedAmount(value: unknown): number | null {
   const amount = Number(value)
   if (!Number.isFinite(amount) || amount <= 0) return null
   return Math.round(amount)
@@ -18,6 +30,102 @@ function getOrderTotal(value: unknown): number | null {
 function createMidtransOrderId(): string {
   const randomSuffix = Math.random().toString(36).substring(2, 10)
   return `iot-${Date.now()}-${randomSuffix}`
+}
+
+function createOrderId(): string {
+  const randomSuffix = Math.random().toString(36).substring(2, 10)
+  return `ord_${Date.now()}_${randomSuffix}`
+}
+
+function getSnapRedirectUrl(isProduction: boolean, snapToken: string): string {
+  const origin = isProduction ? 'https://app.midtrans.com' : 'https://app.sandbox.midtrans.com'
+  return `${origin}/snap/v2/vtweb/${encodeURIComponent(snapToken)}`
+}
+
+async function ensureBillingSnapshot(
+  accessRequest: AccessRequest,
+  deviceId: string,
+  createdAt: string
+): Promise<AccessRequest> {
+  if (accessRequest.billingSnapshot) return accessRequest
+
+  const device = await ServerDataStore.getDeviceById(deviceId)
+  if (!device) {
+    throw new Error(`Device ${deviceId} was not found while creating billing snapshot.`)
+  }
+
+  const billingSnapshot = createBillingSnapshot({
+    device,
+    developerId: accessRequest.developerId,
+    createdAt,
+  })
+
+  if (device.billingType !== 'one_time' || billingSnapshot.quotedAmount <= 0) {
+    throw new Error(`Access request ${accessRequest.id} does not have a payable billing snapshot.`)
+  }
+
+  const updatedRequest = await ServerDataStore.updateAccessRequest(accessRequest.id, { billingSnapshot })
+  if (!updatedRequest) {
+    throw new Error(`Failed to persist billing snapshot for access request ${accessRequest.id}.`)
+  }
+
+  return updatedRequest
+}
+
+function createPaymentOrder(
+  accessRequest: AccessRequest,
+  billingSnapshot: BillingSnapshot,
+  now: string
+): Order {
+  const totalAmount = billingSnapshot.quotedAmount
+  return {
+    id: createOrderId(),
+    accessRequestId: accessRequest.id,
+    deviceId: billingSnapshot.deviceId,
+    buyerId: accessRequest.developerId,
+    sellerId: billingSnapshot.ownerId,
+    totalAmount,
+    currency: billingSnapshot.currency,
+    paymentStatus: 'PENDING',
+    ...createOrderPayoutFields(totalAmount),
+    midtransOrderId: createMidtransOrderId(),
+    billingSnapshot,
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+async function getMidtransStatusWithRetry(
+  coreApi: InstanceType<typeof midtransClient.CoreApi>,
+  order: Order
+): Promise<Record<string, unknown>> {
+  let lastError: unknown = null
+
+  for (const attempt of MIDTRANS_STATUS_RETRY_ATTEMPTS) {
+    try {
+      return await coreApi.transaction.status(order.midtransOrderId)
+    } catch (error) {
+      lastError = error
+      console.warn('midtrans.token_reuse_status_failed', {
+        orderId: order.id,
+        midtransOrderId: order.midtransOrderId,
+        attempt,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  if (lastError instanceof Error) throw lastError
+  throw new Error(`Failed to check Midtrans status for order ${order.id}.`)
+}
+
+async function syncReusableOrder(
+  coreApi: InstanceType<typeof midtransClient.CoreApi>,
+  order: Order
+): Promise<Order> {
+  const statusResponse = await getMidtransStatusWithRetry(coreApi, order)
+  const syncResult = await applyMidtransStatusToOrder(statusResponse)
+  return syncResult?.order || order
 }
 
 export async function POST(request: Request) {
@@ -36,12 +144,12 @@ export async function POST(request: Request) {
   }
 
   const orderId = typeof body.orderId === 'string' ? body.orderId.trim() : ''
-  const totalAmount = getOrderTotal(body.totalAmount)
+  const clientSubmittedAmount = getClientSubmittedAmount(body.totalAmount)
   const customerName = typeof body.customerName === 'string' ? body.customerName.trim() : currentUser.name
   const customerEmail = typeof body.customerEmail === 'string' ? body.customerEmail.trim() : currentUser.email
 
-  if (!orderId || !totalAmount || !customerName || !customerEmail) {
-    return NextResponse.json({ error: 'orderId, totalAmount, customerName, and customerEmail are required.' }, { status: 400 })
+  if (!orderId || !customerName || !customerEmail) {
+    return NextResponse.json({ error: 'orderId, customerName, and customerEmail are required.' }, { status: 400 })
   }
 
   const accessRequest = await ServerDataStore.getAccessRequestById(orderId)
@@ -57,84 +165,138 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'This access request is not waiting for payment.' }, { status: 400 })
   }
 
-  const device = await ServerDataStore.getDeviceById(accessRequest.deviceId)
-  if (!device) {
-    return NextResponse.json({ error: 'Device not found.' }, { status: 404 })
+  let payableAccessRequest: AccessRequest
+  try {
+    payableAccessRequest = await ensureBillingSnapshot(accessRequest, accessRequest.deviceId, accessRequest.createdAt)
+  } catch (error) {
+    console.error('midtrans.billing_snapshot_failed', {
+      accessRequestId: accessRequest.id,
+      deviceId: accessRequest.deviceId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return NextResponse.json({ error: 'Failed to prepare payment billing snapshot.' }, { status: 500 })
   }
 
-  const expectedAmount = Math.round(Number(device.accessPrice || 0))
-  if (device.billingType !== 'one_time' || expectedAmount <= 0) {
-    return NextResponse.json({ error: 'This device does not require payment.' }, { status: 400 })
+  const billingSnapshot = payableAccessRequest.billingSnapshot
+  if (!billingSnapshot) {
+    return NextResponse.json({ error: 'Payment billing snapshot is missing.' }, { status: 500 })
   }
 
-  if (totalAmount !== expectedAmount) {
-    return NextResponse.json({ error: 'Payment amount does not match the device access price.' }, { status: 400 })
+  if (billingSnapshot.quotedAmount <= 0) {
+    return NextResponse.json({ error: 'Payment billing snapshot amount is invalid.' }, { status: 400 })
   }
 
-  const snap = new midtransClient.Snap(getMidtransConfig())
+  if (clientSubmittedAmount !== null && clientSubmittedAmount !== billingSnapshot.quotedAmount) {
+    console.warn('midtrans.client_amount_ignored', {
+      accessRequestId: accessRequest.id,
+      clientSubmittedAmount,
+      quotedAmount: billingSnapshot.quotedAmount,
+    })
+  }
+
+  const midtransConfig = getMidtransConfig()
+  const snap = new midtransClient.Snap(midtransConfig)
+  const coreApi = new midtransClient.CoreApi(midtransConfig)
   const now = new Date().toISOString()
-  const existingOrder = await ServerDataStore.getOrderByAccessRequestId(accessRequest.id)
+  const existingOrders = await ServerDataStore.getOrdersByAccessRequestId(accessRequest.id)
+  const paidOrder = getPaidOrders(existingOrders)[0] || null
 
-  if (existingOrder?.paymentStatus === 'PAID') {
+  if (paidOrder) {
     return NextResponse.json(
-      { error: 'Payment is already completed for this access request. Wait for owner approval.' },
+      { error: 'Payment is already completed or under refund review for this access request. Wait for owner/admin review.' },
       { status: 409 }
     )
   }
 
-  const midtransOrderId = createMidtransOrderId()
-  const order: Order = {
-    id: existingOrder?.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
-    accessRequestId: accessRequest.id,
-    deviceId: device.id,
-    buyerId: currentUser.id,
-    sellerId: device.ownerId,
-    totalAmount,
-    currency: device.currency || 'IDR',
-    paymentStatus: 'PENDING',
-    ...createOrderPayoutFields(totalAmount),
-    midtransOrderId,
-    createdAt: existingOrder?.createdAt || now,
-    updatedAt: now,
+  const reusableOrder = getReusablePendingOrder(existingOrders)
+  if (reusableOrder) {
+    let syncedOrder: Order
+    try {
+      syncedOrder = await syncReusableOrder(coreApi, reusableOrder)
+    } catch (error) {
+      if (error instanceof MidtransPaymentValidationError) {
+        console.error('midtrans.token_reuse_validation_failed', {
+          orderId: reusableOrder.id,
+          midtransOrderId: reusableOrder.midtransOrderId,
+          validationContext: error.context,
+        })
+        return NextResponse.json({ error: 'Existing Midtrans payment data failed validation.' }, { status: 400 })
+      }
+
+      console.error('midtrans.token_reuse_sync_failed', {
+        orderId: reusableOrder.id,
+        midtransOrderId: reusableOrder.midtransOrderId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return NextResponse.json({ error: 'Failed to check existing Midtrans payment status.' }, { status: 502 })
+    }
+
+    if (syncedOrder.paymentStatus === 'PENDING' && syncedOrder.snapToken) {
+      await ServerDataStore.logAction(
+        currentUser.id,
+        currentUser.name,
+        currentUser.role,
+        'payment.midtrans_token_reused',
+        'access_request',
+        accessRequest.id,
+        'success',
+        `Midtrans order ${syncedOrder.midtransOrderId}`
+      )
+
+      return NextResponse.json({
+        token: syncedOrder.snapToken,
+        redirect_url: syncedOrder.snapRedirectUrl || getSnapRedirectUrl(midtransConfig.isProduction, syncedOrder.snapToken),
+        order: syncedOrder,
+      })
+    }
+
+    if (isPaidOrLaterPaymentStatus(syncedOrder.paymentStatus)) {
+      return NextResponse.json(
+        { error: 'Payment is already completed or under refund review for this access request. Wait for owner/admin review.' },
+        { status: 409 }
+      )
+    }
   }
 
-  const transaction = await snap.createTransaction({
-    transaction_details: {
-      order_id: order.midtransOrderId,
-      gross_amount: order.totalAmount,
-    },
-    customer_details: {
-      first_name: customerName,
-      email: customerEmail,
-    },
-    item_details: [
-      {
-        id: device.id,
-        name: `Access to ${device.name}`.slice(0, 50),
-        price: order.totalAmount,
-        quantity: 1,
-      },
-    ],
-  })
+  const order = createPaymentOrder(payableAccessRequest, billingSnapshot, now)
 
-  const savedOrder = existingOrder
-    ? await ServerDataStore.updateOrder(existingOrder.id, {
-        totalAmount,
-        currency: order.currency,
-        paymentStatus: 'PENDING',
-        payoutStatus: 'NOT_ELIGIBLE',
-        platformFee: order.platformFee,
-        ownerAmount: order.ownerAmount,
-        paidOutAt: undefined,
-        snapToken: transaction.token,
-        midtransOrderId: order.midtransOrderId,
-        updatedAt: now,
-      })
-    : await ServerDataStore.addOrder({
-        ...order,
-        snapToken: transaction.token,
-        updatedAt: now,
-      })
+  let transaction: { token: string; redirect_url: string }
+  try {
+    transaction = await snap.createTransaction({
+      transaction_details: {
+        order_id: order.midtransOrderId,
+        gross_amount: order.totalAmount,
+      },
+      customer_details: {
+        first_name: customerName,
+        email: customerEmail,
+      },
+      item_details: [
+        {
+          id: billingSnapshot.deviceId,
+          name: `Access to ${billingSnapshot.deviceName}`.slice(0, 50),
+          price: order.totalAmount,
+          quantity: 1,
+        },
+      ],
+    })
+  } catch (error) {
+    const validationContext = error instanceof MidtransPaymentValidationError ? error.context : undefined
+    console.error('midtrans.token_create_failed', {
+      accessRequestId: accessRequest.id,
+      midtransOrderId: order.midtransOrderId,
+      validationContext,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return NextResponse.json({ error: 'Failed to create Midtrans payment token.' }, { status: 502 })
+  }
+
+  const savedOrder = await ServerDataStore.addOrder({
+    ...order,
+    snapToken: transaction.token,
+    snapRedirectUrl: transaction.redirect_url,
+    updatedAt: now,
+  })
 
   if (!savedOrder) {
     return NextResponse.json({ error: 'Failed to save Midtrans order.' }, { status: 500 })

@@ -2,8 +2,28 @@
 
 export type UserRole = 'device_owner' | 'developer' | 'admin'
 export type BillingType = 'free' | 'one_time'
-export type PaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'EXPIRED'
+export type PaymentStatus =
+  | 'PENDING'
+  | 'PAID'
+  | 'FAILED'
+  | 'EXPIRED'
+  | 'CANCELLED'
+  | 'DENIED'
+  | 'REFUNDED'
+  | 'PARTIAL_REFUND'
+  | 'CHARGEBACK'
+  | 'PARTIAL_CHARGEBACK'
 export type PayoutStatus = 'NOT_ELIGIBLE' | 'ELIGIBLE' | 'PAID_OUT' | 'REFUND_REQUIRED' | 'REFUNDED'
+
+export interface BillingSnapshot {
+  quotedAmount: number
+  currency: string
+  deviceId: string
+  deviceName: string
+  ownerId: string
+  developerId: string
+  createdAt: string
+}
 
 export interface User {
   id: string
@@ -57,6 +77,7 @@ export interface AccessRequest {
   scopes: string[]
   requestedUntil: string
   status: 'pending' | 'pending_payment' | 'approved' | 'rejected' | 'revoked' | 'cancelled'
+  billingSnapshot?: BillingSnapshot
   createdAt: string
 }
 
@@ -99,7 +120,9 @@ export interface Order {
   ownerAmount: number
   paidOutAt?: string
   snapToken?: string
+  snapRedirectUrl?: string
   midtransOrderId: string
+  billingSnapshot?: BillingSnapshot
   createdAt: string
   updatedAt: string
 }

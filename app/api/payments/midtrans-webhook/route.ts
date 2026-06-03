@@ -5,6 +5,7 @@ import {
   getMidtransConfig,
   getMidtransOrderId,
   getPaymentStatusFromMidtransResponse,
+  MidtransPaymentValidationError,
 } from '@/lib/midtrans-payments'
 import { ServerDataStore } from '@/lib/server-data-store'
 
@@ -66,7 +67,6 @@ export async function POST(request: Request) {
           transactionId: notificationTransactionId,
           orderId: asString(notification.order_id),
         },
-        detail: error instanceof Error ? error.message : String(error),
       },
       { status: 502 }
     )
@@ -76,11 +76,41 @@ export async function POST(request: Request) {
   const paymentStatus = getPaymentStatusFromMidtransResponse(statusResponse)
 
   if (!midtransOrderId || !paymentStatus) {
-    return NextResponse.json({ error: 'Unsupported Midtrans notification.' }, { status: 400 })
+    console.warn('midtrans.webhook_ignored_unknown_status', {
+      notificationTransactionId,
+      midtransOrderId,
+      transactionStatus: asString(statusResponse.transaction_status),
+      fraudStatus: asString(statusResponse.fraud_status),
+    })
+    return NextResponse.json({ success: true, ignored: true })
   }
 
-  const result = await applyMidtransStatusToOrder(statusResponse)
+  let result: Awaited<ReturnType<typeof applyMidtransStatusToOrder>>
+  try {
+    result = await applyMidtransStatusToOrder(statusResponse)
+  } catch (error) {
+    if (error instanceof MidtransPaymentValidationError) {
+      console.error('midtrans.webhook_validation_failed', {
+        notificationTransactionId,
+        midtransOrderId,
+        validationContext: error.context,
+      })
+      return NextResponse.json({ error: 'Midtrans payment data failed validation.' }, { status: 400 })
+    }
+
+    console.error('midtrans.webhook_apply_failed', {
+      notificationTransactionId,
+      midtransOrderId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return NextResponse.json({ error: 'Failed to apply Midtrans notification.' }, { status: 500 })
+  }
+
   if (!result) {
+    console.warn('midtrans.webhook_order_not_found', {
+      notificationTransactionId,
+      midtransOrderId,
+    })
     return NextResponse.json({ error: 'Order not found.' }, { status: 404 })
   }
 
@@ -95,12 +125,39 @@ export async function POST(request: Request) {
       'success',
       `Order ${result.order.midtransOrderId} paid; waiting for owner approval`
     )
-  } else if (paymentStatus === 'EXPIRED' || paymentStatus === 'FAILED') {
+  } else if (
+    paymentStatus === 'EXPIRED' ||
+    paymentStatus === 'FAILED' ||
+    paymentStatus === 'CANCELLED' ||
+    paymentStatus === 'DENIED'
+  ) {
     await ServerDataStore.logAction(
       'midtrans',
       'Midtrans Webhook',
       'admin',
-      paymentStatus === 'EXPIRED' ? 'payment.expired' : 'payment.failed',
+      `payment.${paymentStatus.toLowerCase()}`,
+      'access_request',
+      result.order.accessRequestId,
+      'success',
+      `Order ${result.order.midtransOrderId} ${paymentStatus.toLowerCase()}`
+    )
+  } else if (paymentStatus === 'REFUNDED' || paymentStatus === 'PARTIAL_REFUND') {
+    await ServerDataStore.logAction(
+      'midtrans',
+      'Midtrans Webhook',
+      'admin',
+      'payment.refund_status',
+      'access_request',
+      result.order.accessRequestId,
+      'success',
+      `Order ${result.order.midtransOrderId} ${paymentStatus.toLowerCase()}`
+    )
+  } else if (paymentStatus === 'CHARGEBACK' || paymentStatus === 'PARTIAL_CHARGEBACK') {
+    await ServerDataStore.logAction(
+      'midtrans',
+      'Midtrans Webhook',
+      'admin',
+      'payment.chargeback_status',
       'access_request',
       result.order.accessRequestId,
       'success',

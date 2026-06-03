@@ -203,8 +203,8 @@ export async function actionAccessRequest(
   })
 }
 
-export async function cancelAccessRequest(requestId: string): Promise<{ request: AccessRequest }> {
-  return fetchJson<{ request: AccessRequest }>(`${baseUrl}/access-requests/${requestId}`, {
+export async function cancelAccessRequest(requestId: string): Promise<{ request: AccessRequest; order?: Order; refundRequired?: boolean }> {
+  return fetchJson<{ request: AccessRequest; order?: Order; refundRequired?: boolean }>(`${baseUrl}/access-requests/${requestId}`, {
     method: 'POST',
     body: JSON.stringify({ action: 'cancel' }),
   })
@@ -230,7 +230,7 @@ export async function updateOrderPayoutAction(
 
 export async function createMidtransPaymentToken(payload: {
   orderId: string
-  totalAmount: number
+  totalAmount?: number
   customerName: string
   customerEmail: string
 }): Promise<{ token: string; redirect_url: string; order: Order }> {

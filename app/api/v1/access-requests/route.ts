@@ -3,6 +3,7 @@ import { ServerDataStore } from '@/lib/server-data-store'
 import { requireCurrentUser } from '@/lib/auth-server'
 import { isGrantActive } from '@/lib/access-control'
 import { hasUserRole } from '@/lib/auth-types'
+import { createBillingSnapshot } from '@/lib/billing-snapshot'
 
 export async function GET(request: Request) {
   const currentUser = await requireCurrentUser(request)
@@ -82,6 +83,14 @@ export async function POST(request: Request) {
   }
 
   const requiresPayment = device.billingType === 'one_time' && Number(device.accessPrice || 0) > 0
+  const createdAt = new Date().toISOString()
+  const billingSnapshot = requiresPayment
+    ? createBillingSnapshot({
+        device,
+        developerId: currentUser.id,
+        createdAt,
+      })
+    : undefined
 
   const requestItem = {
     id: `ar_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
@@ -93,7 +102,8 @@ export async function POST(request: Request) {
     scopes,
     requestedUntil,
     status: requiresPayment ? 'pending_payment' as const : 'pending' as const,
-    createdAt: new Date().toISOString(),
+    billingSnapshot,
+    createdAt,
   }
 
   await ServerDataStore.addAccessRequest(requestItem)

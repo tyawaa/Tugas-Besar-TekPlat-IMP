@@ -17,6 +17,7 @@ import {
 import { AuthSession, StoredUser, normalizeStoredUser, normalizeUserRoles } from './auth-types'
 import { createInitialDemoUsers } from './demo-users'
 import { normalizeOrderPayout } from './order-payouts'
+import { normalizeBillingSnapshot } from './billing-snapshot'
 
 const POSTGRES_URL =
   process.env.DATABASE_URL ||
@@ -93,6 +94,7 @@ interface AccessRequestRow {
   scopes: unknown
   requested_until: string
   status: AccessRequest['status']
+  billing_snapshot: unknown | null
   created_at: string
 }
 
@@ -247,6 +249,7 @@ async function createTables(client: PoolClient): Promise<void> {
       scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
       requested_until TEXT NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('pending', 'pending_payment', 'approved', 'rejected', 'revoked', 'cancelled')),
+      billing_snapshot JSONB,
       created_at TEXT NOT NULL
     );
 
@@ -259,13 +262,18 @@ async function createTables(client: PoolClient): Promise<void> {
       total_amount INTEGER NOT NULL,
       currency TEXT NOT NULL DEFAULT 'IDR',
       payment_method TEXT,
-      payment_status TEXT NOT NULL CHECK (payment_status IN ('PENDING', 'PAID', 'FAILED', 'EXPIRED')),
+      payment_status TEXT NOT NULL CHECK (payment_status IN (
+        'PENDING', 'PAID', 'FAILED', 'EXPIRED', 'CANCELLED', 'DENIED',
+        'REFUNDED', 'PARTIAL_REFUND', 'CHARGEBACK', 'PARTIAL_CHARGEBACK'
+      )),
       payout_status TEXT NOT NULL DEFAULT 'NOT_ELIGIBLE' CHECK (payout_status IN ('NOT_ELIGIBLE', 'ELIGIBLE', 'PAID_OUT', 'REFUND_REQUIRED', 'REFUNDED')),
       platform_fee INTEGER NOT NULL DEFAULT 0,
       owner_amount INTEGER NOT NULL DEFAULT 0,
       paid_out_at TEXT,
       snap_token TEXT,
+      snap_redirect_url TEXT,
       midtrans_order_id TEXT NOT NULL UNIQUE,
+      billing_snapshot JSONB,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -342,11 +350,26 @@ async function createTables(client: PoolClient): Promise<void> {
       ADD CONSTRAINT access_requests_status_check
       CHECK (status IN ('pending', 'pending_payment', 'approved', 'rejected', 'revoked', 'cancelled'));
 
+    ALTER TABLE access_requests
+      ADD COLUMN IF NOT EXISTS billing_snapshot JSONB;
+
     ALTER TABLE orders
       ADD COLUMN IF NOT EXISTS payout_status TEXT NOT NULL DEFAULT 'NOT_ELIGIBLE',
       ADD COLUMN IF NOT EXISTS platform_fee INTEGER NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS owner_amount INTEGER NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS paid_out_at TEXT;
+      ADD COLUMN IF NOT EXISTS paid_out_at TEXT,
+      ADD COLUMN IF NOT EXISTS snap_redirect_url TEXT,
+      ADD COLUMN IF NOT EXISTS billing_snapshot JSONB;
+
+    ALTER TABLE orders
+      DROP CONSTRAINT IF EXISTS orders_payment_status_check;
+
+    ALTER TABLE orders
+      ADD CONSTRAINT orders_payment_status_check
+      CHECK (payment_status IN (
+        'PENDING', 'PAID', 'FAILED', 'EXPIRED', 'CANCELLED', 'DENIED',
+        'REFUNDED', 'PARTIAL_REFUND', 'CHARGEBACK', 'PARTIAL_CHARGEBACK'
+      ));
 
     ALTER TABLE orders
       DROP CONSTRAINT IF EXISTS orders_payout_status_check;
@@ -372,7 +395,9 @@ interface OrderRow {
   owner_amount: number
   paid_out_at: string | null
   snap_token: string | null
+  snap_redirect_url: string | null
   midtrans_order_id: string
+  billing_snapshot: unknown | null
   created_at: string
   updated_at: string
 }
@@ -406,8 +431,8 @@ async function seedInitialData(client: PoolClient): Promise<void> {
       await client.query(
         `INSERT INTO access_requests (
           id, device_id, developer_id, developer_name, developer_email, purpose,
-          scopes, requested_until, status, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)`,
+          scopes, requested_until, status, billing_snapshot, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb, $11)`,
         accessRequestParams(request)
       )
     }
@@ -430,8 +455,8 @@ async function seedInitialData(client: PoolClient): Promise<void> {
         `INSERT INTO orders (
           id, access_request_id, device_id, buyer_id, seller_id, total_amount, currency,
           payment_method, payment_status, payout_status, platform_fee, owner_amount, paid_out_at,
-          snap_token, midtrans_order_id, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+          snap_token, snap_redirect_url, midtrans_order_id, billing_snapshot, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19)`,
         orderParams(order)
       )
     }
@@ -570,6 +595,7 @@ function mapAccessRequest(row: AccessRequestRow): AccessRequest {
     scopes: parseJsonArray<string>(row.scopes),
     requestedUntil: row.requested_until,
     status: row.status,
+    billingSnapshot: normalizeBillingSnapshot(row.billing_snapshot) || undefined,
     createdAt: row.created_at,
   }
 }
@@ -637,7 +663,9 @@ function mapOrder(row: OrderRow): Order {
     ownerAmount: row.owner_amount,
     paidOutAt: row.paid_out_at || undefined,
     snapToken: row.snap_token || undefined,
+    snapRedirectUrl: row.snap_redirect_url || undefined,
     midtransOrderId: row.midtrans_order_id,
+    billingSnapshot: normalizeBillingSnapshot(row.billing_snapshot) || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   })
@@ -683,6 +711,7 @@ function accessRequestParams(request: AccessRequest): unknown[] {
     JSON.stringify(request.scopes),
     request.requestedUntil,
     request.status,
+    request.billingSnapshot ? JSON.stringify(request.billingSnapshot) : null,
     request.createdAt,
   ]
 }
@@ -717,7 +746,9 @@ function orderParams(order: Order): unknown[] {
     normalizedOrder.ownerAmount,
     normalizedOrder.paidOutAt || null,
     normalizedOrder.snapToken || null,
+    normalizedOrder.snapRedirectUrl || null,
     normalizedOrder.midtransOrderId,
+    normalizedOrder.billingSnapshot ? JSON.stringify(normalizedOrder.billingSnapshot) : null,
     normalizedOrder.createdAt,
     normalizedOrder.updatedAt,
   ]
@@ -797,8 +828,8 @@ async function upsertAccessRequest(request: AccessRequest): Promise<AccessReques
   const rows = await query<AccessRequestRow>(
     `INSERT INTO access_requests (
        id, device_id, developer_id, developer_name, developer_email, purpose,
-       scopes, requested_until, status, created_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
+       scopes, requested_until, status, billing_snapshot, created_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb, $11)
      ON CONFLICT (id) DO UPDATE SET
        device_id = EXCLUDED.device_id,
        developer_id = EXCLUDED.developer_id,
@@ -808,6 +839,7 @@ async function upsertAccessRequest(request: AccessRequest): Promise<AccessReques
        scopes = EXCLUDED.scopes,
        requested_until = EXCLUDED.requested_until,
        status = EXCLUDED.status,
+       billing_snapshot = EXCLUDED.billing_snapshot,
        created_at = EXCLUDED.created_at
      RETURNING *`,
     accessRequestParams(request)
@@ -820,8 +852,8 @@ async function upsertOrder(order: Order): Promise<Order> {
     `INSERT INTO orders (
        id, access_request_id, device_id, buyer_id, seller_id, total_amount, currency,
        payment_method, payment_status, payout_status, platform_fee, owner_amount, paid_out_at,
-       snap_token, midtrans_order_id, created_at, updated_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+       snap_token, snap_redirect_url, midtrans_order_id, billing_snapshot, created_at, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19)
      ON CONFLICT (id) DO UPDATE SET
        access_request_id = EXCLUDED.access_request_id,
        device_id = EXCLUDED.device_id,
@@ -836,7 +868,9 @@ async function upsertOrder(order: Order): Promise<Order> {
        owner_amount = EXCLUDED.owner_amount,
        paid_out_at = EXCLUDED.paid_out_at,
        snap_token = EXCLUDED.snap_token,
+       snap_redirect_url = EXCLUDED.snap_redirect_url,
        midtrans_order_id = EXCLUDED.midtrans_order_id,
+       billing_snapshot = EXCLUDED.billing_snapshot,
        created_at = EXCLUDED.created_at,
        updated_at = EXCLUDED.updated_at
      RETURNING *`,
@@ -993,8 +1027,19 @@ export class PostgresDataStore {
   }
 
   static async getOrderByAccessRequestId(accessRequestId: string): Promise<Order | null> {
-    const rows = await query<OrderRow>('SELECT * FROM orders WHERE access_request_id = $1 LIMIT 1', [accessRequestId])
+    const rows = await query<OrderRow>(
+      'SELECT * FROM orders WHERE access_request_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1',
+      [accessRequestId]
+    )
     return rows[0] ? mapOrder(rows[0]) : null
+  }
+
+  static async getOrdersByAccessRequestId(accessRequestId: string): Promise<Order[]> {
+    const rows = await query<OrderRow>(
+      'SELECT * FROM orders WHERE access_request_id = $1 ORDER BY created_at DESC, id DESC',
+      [accessRequestId]
+    )
+    return rows.map(mapOrder)
   }
 
   static async addOrder(order: Order): Promise<Order> {

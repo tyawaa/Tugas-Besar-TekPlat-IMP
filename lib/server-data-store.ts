@@ -19,6 +19,7 @@ import { AuthSession, StoredUser, normalizeStoredUser } from './auth-types'
 import { createInitialDemoUsers, shouldSeedDemoUsers } from './demo-users'
 import { isPostgresConfigured, PostgresDataStore } from './postgres-data-store'
 import { normalizeOrderPayout } from './order-payouts'
+import { getLatestOrder } from './payment-state'
 
 const DATA_DIR =
   process.env.IOTBRIDGE_DATA_DIR ||
@@ -403,7 +404,13 @@ export class ServerDataStore {
   static async getOrderByAccessRequestId(accessRequestId: string): Promise<Order | null> {
     if (isPostgresConfigured()) return PostgresDataStore.getOrderByAccessRequestId(accessRequestId)
     const orders = await this.getAllOrders()
-    return orders.find(order => order.accessRequestId === accessRequestId) || null
+    return getLatestOrder(orders.filter(order => order.accessRequestId === accessRequestId))
+  }
+
+  static async getOrdersByAccessRequestId(accessRequestId: string): Promise<Order[]> {
+    if (isPostgresConfigured()) return PostgresDataStore.getOrdersByAccessRequestId(accessRequestId)
+    const orders = await this.getAllOrders()
+    return orders.filter(order => order.accessRequestId === accessRequestId)
   }
 
   static async addOrder(order: Order): Promise<Order> {
