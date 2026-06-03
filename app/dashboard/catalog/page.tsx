@@ -30,6 +30,8 @@ import {
   Clock,
   Filter,
   CheckCircle,
+  CreditCard,
+  XCircle,
 } from 'lucide-react'
 import { AccessGrant, AccessRequest, Device, deviceHealth } from '@/lib/mock-data'
 import { useAuth } from '@/lib/auth-context'
@@ -175,6 +177,21 @@ export default function CatalogPage() {
     }
   }
 
+  const handleCancelPendingPayment = async (request: AccessRequest, device: Device) => {
+    try {
+      setUpdatingDeviceId(device.id)
+      setPaymentMessage('Cancelling pending payment request...')
+      const result = await cancelAccessRequest(request.id)
+      setAccessRequests(current => current.map(item => item.id === result.request.id ? result.request : item))
+      setPaymentMessage('Pending payment cancelled. You can request access again whenever you want.')
+    } catch (error) {
+      console.error('Failed to cancel pending payment', error)
+      setPaymentMessage('Failed to cancel pending payment. Please try again.')
+    } finally {
+      setUpdatingDeviceId(null)
+    }
+  }
+
   const handleSubmitRequest = async () => {
     if (!selectedDevice || !userId) return
 
@@ -272,6 +289,11 @@ export default function CatalogPage() {
                 </Select>
               </div>
             </div>
+            {paymentMessage && (
+              <div className="mt-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                {paymentMessage}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -336,13 +358,29 @@ export default function CatalogPage() {
                         </Link>
                       </Button>
                     ) : pendingPaymentRequest ? (
-                      <Button
-                        onClick={() => handlePayForRequest(pendingPaymentRequest, device)}
-                        disabled={isUpdating}
-                        className="w-full bg-primary hover:bg-primary/90"
-                      >
-                        {isUpdating ? 'Opening...' : 'Bayar dengan Midtrans'}
-                      </Button>
+                      <div className="space-y-2">
+                        <div className="mb-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                          <span>Waiting for payment</span>
+                          <StatusBadge status="pending_payment" />
+                        </div>
+                        <Button
+                          onClick={() => handlePayForRequest(pendingPaymentRequest, device)}
+                          disabled={isUpdating}
+                          className="w-full bg-primary hover:bg-primary/90"
+                        >
+                          <CreditCard className="mr-2 h-4 w-4" />
+                          {isUpdating ? 'Opening...' : 'Retry Payment'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => handleCancelPendingPayment(pendingPaymentRequest, device)}
+                          disabled={isUpdating}
+                          className="w-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        >
+                          <XCircle className="mr-2 h-4 w-4" />
+                          {isUpdating ? 'Cancelling...' : 'Cancel Pending Payment'}
+                        </Button>
+                      </div>
                     ) : pendingRequests.length > 0 ? (
                       <Button
                         variant="destructive"
