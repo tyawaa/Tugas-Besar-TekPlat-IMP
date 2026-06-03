@@ -9,6 +9,11 @@ export interface StoredUser {
   passwordHash: string
   createdAt: string
   status: 'active' | 'suspended'
+  twoFactorEnabled?: boolean
+  twoFactorCodeHash?: string
+  twoFactorCodeExpiresAt?: string
+  passwordResetCodeHash?: string
+  passwordResetCodeExpiresAt?: string
 }
 
 export interface PublicUser {
@@ -19,6 +24,7 @@ export interface PublicUser {
   roles: UserRole[]
   createdAt: string
   status: 'active' | 'suspended'
+  twoFactorEnabled: boolean
 }
 
 export interface AuthSession {
@@ -46,6 +52,7 @@ export function normalizeStoredUser(user: StoredUser): StoredUser {
   return {
     ...user,
     roles: normalizeUserRoles(user.role, user.roles),
+    twoFactorEnabled: Boolean(user.twoFactorEnabled),
   }
 }
 
@@ -64,5 +71,6 @@ export function toPublicUser(user: StoredUser): PublicUser {
     roles,
     createdAt: user.createdAt,
     status: user.status,
+    twoFactorEnabled: Boolean(user.twoFactorEnabled),
   }
 }

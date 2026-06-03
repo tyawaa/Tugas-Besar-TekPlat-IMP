@@ -37,8 +37,9 @@ export async function registerAccount(payload: {
 export async function loginAccount(payload: {
   email: string
   password: string
-}): Promise<{ user: PublicUser }> {
-  return fetchJson<{ user: PublicUser }>('/api/auth/login', {
+  twoFactorCode?: string
+}): Promise<{ user?: PublicUser; requiresTwoFactor?: boolean; message?: string; devCode?: string }> {
+  return fetchJson<{ user?: PublicUser; requiresTwoFactor?: boolean; message?: string; devCode?: string }>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -52,6 +53,57 @@ export async function logoutAccount(): Promise<{ success: boolean }> {
 
 export async function getCurrentAccount(): Promise<{ user: PublicUser | null }> {
   return fetchJson<{ user: PublicUser | null }>('/api/auth/me')
+}
+
+export async function updateProfile(payload: { name: string; email: string }): Promise<{ user: PublicUser }> {
+  return fetchJson<{ user: PublicUser }>('/api/auth/profile', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function changePassword(payload: {
+  currentPassword: string
+  newPassword: string
+}): Promise<{ success: boolean }> {
+  return fetchJson<{ success: boolean }>('/api/auth/password', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function requestPasswordReset(email: string): Promise<{ message: string; devCode?: string }> {
+  return fetchJson<{ message: string; devCode?: string }>('/api/auth/password-reset/request', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+}
+
+export async function confirmPasswordReset(payload: {
+  email: string
+  code: string
+  password: string
+}): Promise<{ success: boolean }> {
+  return fetchJson<{ success: boolean }>('/api/auth/password-reset/confirm', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function requestTwoFactorCode(): Promise<{ message: string; devCode?: string }> {
+  return fetchJson<{ message: string; devCode?: string }>('/api/auth/two-factor', {
+    method: 'POST',
+  })
+}
+
+export async function updateTwoFactor(payload: {
+  enabled: boolean
+  code: string
+}): Promise<{ user: PublicUser }> {
+  return fetchJson<{ user: PublicUser }>('/api/auth/two-factor', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
 }
 
 export async function getUsers(): Promise<PublicUser[]> {

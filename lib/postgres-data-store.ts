@@ -41,6 +41,11 @@ interface UserRow {
   password_hash: string
   created_at: string
   status: 'active' | 'suspended'
+  two_factor_enabled: boolean | null
+  two_factor_code_hash: string | null
+  two_factor_code_expires_at: string | null
+  password_reset_code_hash: string | null
+  password_reset_code_expires_at: string | null
 }
 
 interface SessionRow {
@@ -189,7 +194,12 @@ async function createTables(client: PoolClient): Promise<void> {
       roles JSONB NOT NULL DEFAULT '[]'::jsonb,
       password_hash TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      status TEXT NOT NULL CHECK (status IN ('active', 'suspended'))
+      status TEXT NOT NULL CHECK (status IN ('active', 'suspended')),
+      two_factor_enabled BOOLEAN NOT NULL DEFAULT false,
+      two_factor_code_hash TEXT,
+      two_factor_code_expires_at TEXT,
+      password_reset_code_hash TEXT,
+      password_reset_code_expires_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS sessions (
@@ -296,6 +306,13 @@ async function createTables(client: PoolClient): Promise<void> {
   await client.query(`
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS roles JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS two_factor_code_hash TEXT,
+      ADD COLUMN IF NOT EXISTS two_factor_code_expires_at TEXT,
+      ADD COLUMN IF NOT EXISTS password_reset_code_hash TEXT,
+      ADD COLUMN IF NOT EXISTS password_reset_code_expires_at TEXT;
 
     UPDATE users
     SET roles = to_jsonb(ARRAY[role])
@@ -414,8 +431,12 @@ async function seedDemoUsers(client: PoolClient): Promise<void> {
   const users = createInitialDemoUsers()
   for (const user of users) {
     await client.query(
-      `INSERT INTO users (id, name, email, role, roles, password_hash, created_at, status)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
+      `INSERT INTO users (
+         id, name, email, role, roles, password_hash, created_at, status,
+         two_factor_enabled, two_factor_code_hash, two_factor_code_expires_at,
+         password_reset_code_hash, password_reset_code_expires_at
+       )
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13)
        ON CONFLICT DO NOTHING`,
       userParams(user)
     )
@@ -467,6 +488,11 @@ function mapUser(row: UserRow): StoredUser {
     passwordHash: row.password_hash,
     createdAt: row.created_at,
     status: row.status,
+    twoFactorEnabled: Boolean(row.two_factor_enabled),
+    twoFactorCodeHash: row.two_factor_code_hash || undefined,
+    twoFactorCodeExpiresAt: row.two_factor_code_expires_at || undefined,
+    passwordResetCodeHash: row.password_reset_code_hash || undefined,
+    passwordResetCodeExpiresAt: row.password_reset_code_expires_at || undefined,
   })
 }
 
@@ -564,6 +590,11 @@ function userParams(user: StoredUser): unknown[] {
     normalizedUser.passwordHash,
     normalizedUser.createdAt,
     normalizedUser.status,
+    Boolean(normalizedUser.twoFactorEnabled),
+    normalizedUser.twoFactorCodeHash || null,
+    normalizedUser.twoFactorCodeExpiresAt || null,
+    normalizedUser.passwordResetCodeHash || null,
+    normalizedUser.passwordResetCodeExpiresAt || null,
   ]
 }
 
@@ -677,8 +708,12 @@ function auditLogParams(log: AuditLog): unknown[] {
 
 async function upsertUser(user: StoredUser): Promise<StoredUser> {
   const rows = await query<UserRow>(
-    `INSERT INTO users (id, name, email, role, roles, password_hash, created_at, status)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
+    `INSERT INTO users (
+       id, name, email, role, roles, password_hash, created_at, status,
+       two_factor_enabled, two_factor_code_hash, two_factor_code_expires_at,
+       password_reset_code_hash, password_reset_code_expires_at
+     )
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name,
        email = EXCLUDED.email,
@@ -686,7 +721,12 @@ async function upsertUser(user: StoredUser): Promise<StoredUser> {
        roles = EXCLUDED.roles,
        password_hash = EXCLUDED.password_hash,
        created_at = EXCLUDED.created_at,
-       status = EXCLUDED.status
+       status = EXCLUDED.status,
+       two_factor_enabled = EXCLUDED.two_factor_enabled,
+       two_factor_code_hash = EXCLUDED.two_factor_code_hash,
+       two_factor_code_expires_at = EXCLUDED.two_factor_code_expires_at,
+       password_reset_code_hash = EXCLUDED.password_reset_code_hash,
+       password_reset_code_expires_at = EXCLUDED.password_reset_code_expires_at
      RETURNING *`,
     userParams(user)
   )

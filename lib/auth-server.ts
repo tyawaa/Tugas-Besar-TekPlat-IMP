@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'crypto'
+import { randomBytes, randomInt, scryptSync, timingSafeEqual, createHash } from 'crypto'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import { ServerDataStore } from './server-data-store'
@@ -8,6 +8,7 @@ import { UserRole } from './mock-data'
 export const SESSION_COOKIE_NAME = 'iotbridge_session'
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const PASSWORD_KEY_LENGTH = 64
+const SECURITY_CODE_TTL_MS = 10 * 60 * 1000
 const LOCAL_DEFAULT_ADMIN_EMAIL = 'admin@iotbridge.local'
 const LOCAL_DEFAULT_ADMIN_PASSWORD = 'Admin12345!'
 const DEFAULT_ADMIN_NAME = 'IoTBridge Admin'
@@ -26,6 +27,67 @@ export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString('hex')
   const hash = scryptSync(password, salt, PASSWORD_KEY_LENGTH).toString('hex')
   return `scrypt:${salt}:${hash}`
+}
+
+export function createSecurityCode(): string {
+  return String(randomInt(100000, 1000000))
+}
+
+export function hashSecurityCode(code: string): string {
+  return createHash('sha256').update(code.trim()).digest('hex')
+}
+
+export function verifySecurityCode(
+  code: string,
+  storedHash?: string,
+  expiresAt?: string
+): boolean {
+  if (!code || !storedHash || !expiresAt) return false
+  if (new Date(expiresAt) <= new Date()) return false
+
+  const candidate = Buffer.from(hashSecurityCode(code), 'hex')
+  const expected = Buffer.from(storedHash, 'hex')
+  if (candidate.length !== expected.length) return false
+  return timingSafeEqual(candidate, expected)
+}
+
+export function getSecurityCodeExpiresAt(): string {
+  return new Date(Date.now() + SECURITY_CODE_TTL_MS).toISOString()
+}
+
+export async function sendSecurityEmail(input: {
+  to: string
+  subject: string
+  message: string
+  code: string
+}): Promise<'sent' | 'dev'> {
+  const resendApiKey = process.env.RESEND_API_KEY
+  const from = process.env.IOTBRIDGE_EMAIL_FROM || 'IoTBridge <onboarding@resend.dev>'
+
+  if (!resendApiKey) {
+    console.info(`[IoTBridge security code] ${input.to}: ${input.code}`)
+    return 'dev'
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from,
+      to: input.to,
+      subject: input.subject,
+      text: `${input.message}\n\nCode: ${input.code}\n\nThis code expires in 10 minutes.`,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Email delivery failed: ${response.status} ${response.statusText}`)
+  }
+
+  return 'sent'
 }
 
 export function verifyPassword(password: string, storedHash: string): boolean {

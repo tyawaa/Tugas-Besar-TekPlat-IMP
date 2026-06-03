@@ -10,9 +10,14 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT NOT NULL UNIQUE,
   role TEXT NOT NULL CHECK (role IN ('device_owner', 'developer', 'admin')),
   roles JSONB NOT NULL DEFAULT '[]'::jsonb,
-  password_hash TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('active', 'suspended'))
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'suspended')),
+    two_factor_enabled BOOLEAN NOT NULL DEFAULT false,
+    two_factor_code_hash TEXT,
+    two_factor_code_expires_at TEXT,
+    password_reset_code_hash TEXT,
+    password_reset_code_expires_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sessions (

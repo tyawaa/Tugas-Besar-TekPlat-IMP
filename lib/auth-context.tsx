@@ -11,8 +11,10 @@ interface AuthContextType {
   userRole: UserRole | null
   userRoles: UserRole[]
   userEmail: string | null
+  twoFactorEnabled: boolean
   setActiveRole: (role: UserRole) => void
-  login: (email: string, password: string) => Promise<void>
+  refreshUser: (user: PublicUser | null) => void
+  login: (email: string, password: string, twoFactorCode?: string) => Promise<{ requiresTwoFactor?: boolean; message?: string; devCode?: string }>
   register: (payload: { name: string; email: string; password: string; role: UserRole }) => Promise<void>
   logout: () => Promise<void>
   isLoading: boolean
@@ -38,6 +40,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userRole, setUserRole] = useState<UserRole | null>(null)
   const [userRoles, setUserRoles] = useState<UserRole[]>([])
   const [userEmail, setUserEmail] = useState<string | null>(null)
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
 
   const setUser = (user: PublicUser | null) => {
@@ -46,6 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUserRoles(user?.roles?.length ? user.roles : user ? [user.role] : [])
     setUserRole(user ? getInitialActiveRole(user) : null)
     setUserEmail(user?.email || null)
+    setTwoFactorEnabled(Boolean(user?.twoFactorEnabled))
   }
 
   useEffect(() => {
@@ -64,9 +68,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loadSession()
   }, [])
 
-  const login = async (email: string, password: string) => {
-    const { user } = await loginAccount({ email, password })
+  const login = async (email: string, password: string, twoFactorCode?: string) => {
+    const { user, requiresTwoFactor, message, devCode } = await loginAccount({ email, password, twoFactorCode })
+    if (requiresTwoFactor) return { requiresTwoFactor, message, devCode }
+    if (!user) throw new Error('Failed to sign in.')
     setUser(user)
+    return {}
   }
 
   const register = async (payload: { name: string; email: string; password: string; role: UserRole }) => {
@@ -91,7 +98,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ userId, userName, userRole, userRoles, userEmail, setActiveRole, login, register, logout, isLoading }}
+      value={{
+        userId,
+        userName,
+        userRole,
+        userRoles,
+        userEmail,
+        twoFactorEnabled,
+        setActiveRole,
+        refreshUser: setUser,
+        login,
+        register,
+        logout,
+        isLoading,
+      }}
     >
       {children}
     </AuthContext.Provider>
