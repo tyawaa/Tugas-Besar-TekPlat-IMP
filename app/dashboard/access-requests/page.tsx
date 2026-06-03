@@ -15,11 +15,12 @@ import {
 } from '@/components/ui/dialog'
 import { AccessRequest, AccessGrant, Device, Order } from '@/lib/mock-data'
 import { useAuth } from '@/lib/auth-context'
-import { getAccessRequests, getAccessGrants, getDevices, actionAccessRequest, revokeAccessGrant, getOrders, updateOrderPayoutAction } from '@/lib/api'
+import { getAccessRequests, getAccessGrants, getDevices, actionAccessRequest, revokeAccessGrant, getOrders, updateOrderPayoutAction, getUsers } from '@/lib/api'
+import { PublicUser } from '@/lib/auth-types'
 import { StatusBadge, KPICard } from '@/components/layout/dashboard-layout'
 import { DashboardLayout } from '@/components/layout/dashboard-layout'
 import { format } from 'date-fns'
-import { CheckCircle2, XCircle, Clock, Eye, Wallet } from 'lucide-react'
+import { CheckCircle2, XCircle, Clock, Eye, ShieldCheck, Users, Wallet } from 'lucide-react'
 
 export default function AccessRequestsPage() {
   const { userId, userName, userRole } = useAuth()
@@ -29,6 +30,7 @@ export default function AccessRequestsPage() {
   const [grants, setGrants] = useState<AccessGrant[]>([])
   const [devices, setDevices] = useState<Device[]>([])
   const [orders, setOrders] = useState<Order[]>([])
+  const [users, setUsers] = useState<PublicUser[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
 
   // Load data from API
@@ -48,10 +50,13 @@ export default function AccessRequestsPage() {
           setRequests(allRequests.filter(ar => ownerDeviceIds.includes(ar.deviceId)))
           setGrants(allGrants.filter(g => ownerDeviceIds.includes(g.deviceId)))
           setOrders(allOrders)
+          setUsers([])
         } else if (userRole === 'admin') {
+          const allUsers = await getUsers()
           setRequests(allRequests)
           setGrants(allGrants)
           setOrders(allOrders)
+          setUsers(allUsers)
         }
       } catch (error) {
         console.error('Failed to load access requests', error)
@@ -64,9 +69,13 @@ export default function AccessRequestsPage() {
   const pendingPaymentCount = requests.filter(ar => ar.status === 'pending_payment').length
   const approvedCount = requests.filter(ar => ar.status === 'approved').length
   const rejectedCount = requests.filter(ar => ar.status === 'rejected').length
+  const isAdminView = userRole === 'admin'
+  const platformOwnerCount = new Set(devices.map(device => device.ownerId)).size
+  const requestingDeveloperCount = new Set(requests.map(request => request.developerId)).size
   const payoutEligibleAmount = orders
     .filter(order => order.payoutStatus === 'ELIGIBLE')
     .reduce((sum, order) => sum + order.ownerAmount, 0)
+  const payoutEligibleCount = orders.filter(order => order.payoutStatus === 'ELIGIBLE').length
 
   const filteredRequests = filter === 'all' 
     ? requests 
@@ -128,9 +137,20 @@ export default function AccessRequestsPage() {
     }
   }
 
-  const getDeviceName = (deviceId: string) => {
-    const device = devices.find(d => d.id === deviceId)
-    return device?.name || deviceId
+  const getDevice = (deviceId: string): Device | undefined => {
+    return devices.find(d => d.id === deviceId)
+  }
+
+  const getDeviceName = (deviceId: string): string => {
+    return getDevice(deviceId)?.name || deviceId
+  }
+
+  const getOwnerName = (deviceId: string): string => {
+    const device = getDevice(deviceId)
+    if (!device) return 'Unknown owner'
+
+    const owner = users.find(user => user.id === device.ownerId)
+    return owner?.name || device.ownerId
   }
 
   const getRequestForOrder = (order: Order): AccessRequest | undefined => {
@@ -166,22 +186,66 @@ export default function AccessRequestsPage() {
     return grants.find(g => g.deviceId === request.deviceId && g.developerId === request.developerId)
   }
 
+  const pageTitle = isAdminView ? 'Access Oversight' : 'Access Requests'
+  const pageSubtitle = isAdminView
+    ? 'Review platform-wide access requests, payment states, and owner payout readiness.'
+    : 'Review developer requests and control who can use your device data.'
+
   return (
-    <DashboardLayout title="Access Requests" subtitle="Review developer requests and control who can use your device data.">
+    <DashboardLayout title={pageTitle} subtitle={pageSubtitle}>
+      {isAdminView && (
+        <div className="mb-6 rounded-lg border border-primary/20 bg-primary/5 p-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-base font-semibold text-foreground">Admin Oversight Mode</h2>
+                  <Badge variant="outline" className="border-primary/30 bg-background text-primary">Platform-wide</Badge>
+                </div>
+                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                  You are viewing requests across all device owners. Approval here acts as a platform action and payout status is tracked separately.
+                </p>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[420px]">
+              <div className="rounded-md border border-primary/20 bg-background px-3 py-2">
+                <p className="text-xs font-medium text-muted-foreground">Owners</p>
+                <p className="text-lg font-semibold text-foreground">{platformOwnerCount}</p>
+              </div>
+              <div className="rounded-md border border-primary/20 bg-background px-3 py-2">
+                <p className="text-xs font-medium text-muted-foreground">Developers</p>
+                <p className="text-lg font-semibold text-foreground">{requestingDeveloperCount}</p>
+              </div>
+              <div className="rounded-md border border-primary/20 bg-background px-3 py-2">
+                <p className="text-xs font-medium text-muted-foreground">Payout Queue</p>
+                <p className="text-lg font-semibold text-foreground">{payoutEligibleCount}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* KPI Cards */}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <KPICard title="Pending Requests" value={pendingCount} icon={<Clock className="h-5 w-5" />} />
-        <KPICard title="Pending Payments" value={pendingPaymentCount} icon={<Clock className="h-5 w-5" />} />
+        <KPICard title={isAdminView ? 'Platform Pending' : 'Pending Requests'} value={pendingCount} icon={<Clock className="h-5 w-5" />} />
+        <KPICard title={isAdminView ? 'Payment Queue' : 'Pending Payments'} value={pendingPaymentCount} icon={<Clock className="h-5 w-5" />} />
         <KPICard title="Approved Grants" value={approvedCount} icon={<CheckCircle2 className="h-5 w-5" />} />
         <KPICard title="Rejected Requests" value={rejectedCount} icon={<XCircle className="h-5 w-5" />} />
-        <KPICard title="Ready Payout" value={formatCurrencyAmount('IDR', payoutEligibleAmount)} icon={<Wallet className="h-5 w-5" />} />
+        <KPICard title={isAdminView ? 'Payout Liability' : 'Ready Payout'} value={formatCurrencyAmount('IDR', payoutEligibleAmount)} icon={<Wallet className="h-5 w-5" />} />
       </div>
 
       {/* Tabs */}
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Requests</CardTitle>
-          <CardDescription>Manage developer access to your devices</CardDescription>
+          <CardTitle>{isAdminView ? 'Platform Access Queue' : 'Requests'}</CardTitle>
+          <CardDescription>
+            {isAdminView
+              ? 'Monitor requests by developer, device owner, and payment state.'
+              : 'Manage developer access to your devices'}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)} className="w-full">
@@ -215,6 +279,7 @@ export default function AccessRequestsPage() {
                     <TableRow className="bg-slate-50">
                       <TableHead>Developer</TableHead>
                       <TableHead>Device</TableHead>
+                      {isAdminView && <TableHead>Owner</TableHead>}
                       <TableHead>Purpose</TableHead>
                       <TableHead>Requested Scope</TableHead>
                       <TableHead>Until</TableHead>
@@ -227,7 +292,7 @@ export default function AccessRequestsPage() {
                       filteredRequests.map((request) => {
                         const grant = getGrantForRequest(request)
                         return (
-                          <TableRow key={request.id} className="hover:bg-slate-50">
+                          <TableRow key={request.id} className={isAdminView ? 'border-l-4 border-l-primary/30 hover:bg-slate-50' : 'hover:bg-slate-50'}>
                             <TableCell>
                               <div>
                                 <div className="font-medium">{request.developerName}</div>
@@ -237,6 +302,14 @@ export default function AccessRequestsPage() {
                             <TableCell>
                               {getDeviceName(request.deviceId)}
                             </TableCell>
+                            {isAdminView && (
+                              <TableCell>
+                                <div className="flex items-center gap-2">
+                                  <Users className="h-4 w-4 text-muted-foreground" />
+                                  <span className="text-sm">{getOwnerName(request.deviceId)}</span>
+                                </div>
+                              </TableCell>
+                            )}
                             <TableCell className="max-w-xs truncate text-sm">
                               {request.purpose}
                             </TableCell>
@@ -294,7 +367,7 @@ export default function AccessRequestsPage() {
                       })
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={isAdminView ? 8 : 7} className="text-center py-8 text-muted-foreground">
                           No requests found
                         </TableCell>
                       </TableRow>
@@ -309,9 +382,11 @@ export default function AccessRequestsPage() {
 
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Payout Tracking</CardTitle>
+          <CardTitle>{isAdminView ? 'Platform Payout Queue' : 'Payout Tracking'}</CardTitle>
           <CardDescription>
-            Paid access orders are held by the platform until owner approval makes them eligible for payout.
+            {isAdminView
+              ? 'Settle eligible owner payouts and record refunds after rejected paid requests.'
+              : 'Paid access orders are held by the platform until owner approval makes them eligible for payout.'}
           </CardDescription>
         </CardHeader>
         <CardContent>
