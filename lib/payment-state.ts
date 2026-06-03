@@ -119,6 +119,11 @@ export function getReusablePendingOrder(orders: Order[]): Order | null {
   return sortedOrders.find(order => order.paymentStatus === 'PENDING' && Boolean(order.snapToken)) || null
 }
 
+export function getActivePendingOrder(orders: Order[]): Order | null {
+  const sortedOrders = sortOrdersNewestFirst(orders)
+  return sortedOrders.find(order => order.paymentStatus === 'PENDING') || null
+}
+
 export function getPaidOrders(orders: Order[]): Order[] {
   return sortOrdersNewestFirst(orders).filter(order => isPaidOrLaterPaymentStatus(order.paymentStatus))
 }

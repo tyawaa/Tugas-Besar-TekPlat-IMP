@@ -18,3 +18,7 @@ ALTER TABLE orders
     'PENDING', 'PAID', 'FAILED', 'EXPIRED', 'CANCELLED', 'DENIED',
     'REFUNDED', 'PARTIAL_REFUND', 'CHARGEBACK', 'PARTIAL_CHARGEBACK'
   ));
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_one_pending_per_access_request
+  ON orders (access_request_id)
+  WHERE payment_status = 'PENDING';

@@ -12,9 +12,10 @@ import {
 } from '@/lib/midtrans-payments'
 import { createOrderPayoutFields } from '@/lib/order-payouts'
 import {
+  getActivePendingOrder,
   getPaidOrders,
-  getReusablePendingOrder,
   isPaidOrLaterPaymentStatus,
+  markPaymentFailed,
 } from '@/lib/payment-state'
 
 export const dynamic = 'force-dynamic'
@@ -128,6 +129,57 @@ async function syncReusableOrder(
   return syncResult?.order || order
 }
 
+async function getPaymentTokenFromActivePendingOrder(
+  coreApi: InstanceType<typeof midtransClient.CoreApi>,
+  order: Order,
+  accessRequestId: string,
+  isProduction: boolean
+): Promise<{ response: NextResponse | null; order: Order }> {
+  if (!order.snapToken) {
+    return {
+      response: NextResponse.json(
+        { error: 'Payment is already being prepared. Please retry in a moment.' },
+        { status: 409 }
+      ),
+      order,
+    }
+  }
+
+  const syncedOrder = await syncReusableOrder(coreApi, order)
+  if (syncedOrder.paymentStatus === 'PENDING' && syncedOrder.snapToken) {
+    return {
+      response: NextResponse.json({
+        token: syncedOrder.snapToken,
+        redirect_url: syncedOrder.snapRedirectUrl || getSnapRedirectUrl(isProduction, syncedOrder.snapToken),
+        order: syncedOrder,
+      }),
+      order: syncedOrder,
+    }
+  }
+
+  if (isPaidOrLaterPaymentStatus(syncedOrder.paymentStatus)) {
+    return {
+      response: NextResponse.json(
+        { error: 'Payment is already completed or under refund review for this access request. Wait for owner/admin review.' },
+        { status: 409 }
+      ),
+      order: syncedOrder,
+    }
+  }
+
+  console.info('midtrans.pending_attempt_no_longer_active', {
+    accessRequestId,
+    orderId: syncedOrder.id,
+    midtransOrderId: syncedOrder.midtransOrderId,
+    paymentStatus: syncedOrder.paymentStatus,
+  })
+
+  return {
+    response: null,
+    order: syncedOrder,
+  }
+}
+
 export async function POST(request: Request) {
   const currentUser = await requireCurrentUser(request)
   if (currentUser instanceof NextResponse) return currentUser
@@ -208,30 +260,40 @@ export async function POST(request: Request) {
     )
   }
 
-  const reusableOrder = getReusablePendingOrder(existingOrders)
-  if (reusableOrder) {
-    let syncedOrder: Order
+  const activePendingOrder = getActivePendingOrder(existingOrders)
+  if (activePendingOrder) {
+    let pendingResponse: NextResponse | null
+    let pendingOrder = activePendingOrder
     try {
-      syncedOrder = await syncReusableOrder(coreApi, reusableOrder)
+      const result = await getPaymentTokenFromActivePendingOrder(
+        coreApi,
+        activePendingOrder,
+        accessRequest.id,
+        midtransConfig.isProduction
+      )
+      pendingResponse = result.response
+      pendingOrder = result.order
     } catch (error) {
       if (error instanceof MidtransPaymentValidationError) {
         console.error('midtrans.token_reuse_validation_failed', {
-          orderId: reusableOrder.id,
-          midtransOrderId: reusableOrder.midtransOrderId,
+          orderId: activePendingOrder.id,
+          midtransOrderId: activePendingOrder.midtransOrderId,
           validationContext: error.context,
         })
         return NextResponse.json({ error: 'Existing Midtrans payment data failed validation.' }, { status: 400 })
       }
 
       console.error('midtrans.token_reuse_sync_failed', {
-        orderId: reusableOrder.id,
-        midtransOrderId: reusableOrder.midtransOrderId,
+        orderId: activePendingOrder.id,
+        midtransOrderId: activePendingOrder.midtransOrderId,
         error: error instanceof Error ? error.message : String(error),
       })
       return NextResponse.json({ error: 'Failed to check existing Midtrans payment status.' }, { status: 502 })
     }
 
-    if (syncedOrder.paymentStatus === 'PENDING' && syncedOrder.snapToken) {
+    if (pendingResponse) {
+      if (pendingResponse.status !== 200) return pendingResponse
+
       await ServerDataStore.logAction(
         currentUser.id,
         currentUser.name,
@@ -240,25 +302,29 @@ export async function POST(request: Request) {
         'access_request',
         accessRequest.id,
         'success',
-        `Midtrans order ${syncedOrder.midtransOrderId}`
+        `Midtrans order ${pendingOrder.midtransOrderId}`
       )
 
-      return NextResponse.json({
-        token: syncedOrder.snapToken,
-        redirect_url: syncedOrder.snapRedirectUrl || getSnapRedirectUrl(midtransConfig.isProduction, syncedOrder.snapToken),
-        order: syncedOrder,
-      })
-    }
-
-    if (isPaidOrLaterPaymentStatus(syncedOrder.paymentStatus)) {
-      return NextResponse.json(
-        { error: 'Payment is already completed or under refund review for this access request. Wait for owner/admin review.' },
-        { status: 409 }
-      )
+      return pendingResponse
     }
   }
 
   const order = createPaymentOrder(payableAccessRequest, billingSnapshot, now)
+
+  let savedPendingOrder: Order
+  try {
+    savedPendingOrder = await ServerDataStore.addOrder(order)
+  } catch (error) {
+    console.warn('midtrans.pending_order_create_conflict', {
+      accessRequestId: accessRequest.id,
+      midtransOrderId: order.midtransOrderId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return NextResponse.json(
+      { error: 'A pending payment is already being prepared for this access request. Please retry in a moment.' },
+      { status: 409 }
+    )
+  }
 
   let transaction: { token: string; redirect_url: string }
   try {
@@ -281,18 +347,21 @@ export async function POST(request: Request) {
       ],
     })
   } catch (error) {
+    await ServerDataStore.updateOrder(
+      savedPendingOrder.id,
+      markPaymentFailed(savedPendingOrder, new Date().toISOString())
+    )
     const validationContext = error instanceof MidtransPaymentValidationError ? error.context : undefined
     console.error('midtrans.token_create_failed', {
       accessRequestId: accessRequest.id,
-      midtransOrderId: order.midtransOrderId,
+      midtransOrderId: savedPendingOrder.midtransOrderId,
       validationContext,
       error: error instanceof Error ? error.message : String(error),
     })
     return NextResponse.json({ error: 'Failed to create Midtrans payment token.' }, { status: 502 })
   }
 
-  const savedOrder = await ServerDataStore.addOrder({
-    ...order,
+  const savedOrder = await ServerDataStore.updateOrder(savedPendingOrder.id, {
     snapToken: transaction.token,
     snapRedirectUrl: transaction.redirect_url,
     updatedAt: now,

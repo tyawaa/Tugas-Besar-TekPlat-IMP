@@ -125,6 +125,9 @@ CREATE INDEX IF NOT EXISTS idx_access_requests_device_id ON access_requests (dev
 CREATE INDEX IF NOT EXISTS idx_access_requests_developer_id ON access_requests (developer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_access_request_id ON orders (access_request_id);
 CREATE INDEX IF NOT EXISTS idx_orders_midtrans_order_id ON orders (midtrans_order_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_one_pending_per_access_request
+  ON orders (access_request_id)
+  WHERE payment_status = 'PENDING';
 CREATE INDEX IF NOT EXISTS idx_access_grants_device_id ON access_grants (device_id);
 CREATE INDEX IF NOT EXISTS idx_access_grants_developer_id ON access_grants (developer_id);
 CREATE INDEX IF NOT EXISTS idx_access_grants_token ON access_grants (token);

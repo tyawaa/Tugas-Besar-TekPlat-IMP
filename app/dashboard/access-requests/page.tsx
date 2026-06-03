@@ -168,8 +168,8 @@ export default function AccessRequestsPage() {
   const getPayoutStatusLabel = (status: Order['payoutStatus']): string => {
     if (status === 'ELIGIBLE') return 'Ready for payout'
     if (status === 'PAID_OUT') return 'Paid out'
-    if (status === 'REFUND_REQUIRED') return 'Refund required'
-    if (status === 'REFUNDED') return 'Refunded'
+    if (status === 'REFUND_REQUIRED') return 'Manual refund required'
+    if (status === 'REFUNDED') return 'Refund marked complete'
     return 'Awaiting approval'
   }
 
@@ -385,7 +385,7 @@ export default function AccessRequestsPage() {
           <CardTitle>{isAdminView ? 'Platform Payout Queue' : 'Payout Tracking'}</CardTitle>
           <CardDescription>
             {isAdminView
-              ? 'Settle eligible owner payouts and record refunds after rejected paid requests.'
+              ? 'Settle eligible owner payouts and manually record refunds after rejected paid requests.'
               : 'Paid access orders are held by the platform until owner approval makes them eligible for payout.'}
           </CardDescription>
         </CardHeader>
@@ -447,7 +447,7 @@ export default function AccessRequestsPage() {
                           )}
                           {userRole === 'admin' && order.payoutStatus === 'REFUND_REQUIRED' && (
                             <Button size="sm" variant="outline" onClick={() => handleMarkRefunded(order.id)}>
-                              Mark Refunded
+                              Mark Manual Refund Complete
                             </Button>
                           )}
                           {userRole !== 'admin' && order.payoutStatus === 'ELIGIBLE' && (

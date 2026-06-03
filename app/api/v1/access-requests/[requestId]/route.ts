@@ -168,6 +168,8 @@ export async function POST(
     let relatedOrder: Order | undefined
     let refundRequired = false
 
+    // TODO: wrap Midtrans/local order cancellation or refund marking with request cancellation in one Postgres transaction.
+    // The local order/refund state is updated before the request is cancelled to avoid losing paid-payment review state.
     if (pendingOrder) {
       const coreApi = new midtransClient.CoreApi(getMidtransConfig())
       let syncedOrder: Order
@@ -294,23 +296,8 @@ export async function POST(
       )
     }
 
-    const updatedRequest = await ServerDataStore.updateAccessRequest(requestId, { status: 'approved' })
-    if (!updatedRequest) {
-      return NextResponse.json({ error: 'Failed to update access request' }, { status: 500 })
-    }
-
-    const grant: AccessGrant = {
-      id: `ag_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
-      deviceId: updatedRequest.deviceId,
-      developerId: updatedRequest.developerId,
-      developerName: updatedRequest.developerName,
-      scopes: updatedRequest.scopes,
-      token: `token_${Math.random().toString(36).substring(2, 32).toUpperCase()}`,
-      expiresAt: updatedRequest.requestedUntil,
-      createdAt: new Date().toISOString(),
-    }
-
-    await ServerDataStore.addAccessGrant(grant)
+    // TODO: wrap payout eligibility, request approval, and grant creation in a single Postgres transaction.
+    // Until ServerDataStore exposes transactions, update payout first so access is not granted before payout is safe.
     let updatedPayoutOrder: Order | undefined
     if (payoutOrder) {
       const payoutUpdate = await ServerDataStore.updateOrder(payoutOrder.id, { payoutStatus: 'ELIGIBLE' })
@@ -334,15 +321,29 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to mark duplicate paid order for refund review.' }, { status: 500 })
     }
 
-    await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'access.approved', 'access_request', requestId)
-
-    result = { request: updatedRequest, grant, order: updatedPayoutOrder }
-  } else if (action === 'reject') {
-    const updatedRequest = await ServerDataStore.updateAccessRequest(requestId, { status: 'rejected' })
+    const updatedRequest = await ServerDataStore.updateAccessRequest(requestId, { status: 'approved' })
     if (!updatedRequest) {
       return NextResponse.json({ error: 'Failed to update access request' }, { status: 500 })
     }
 
+    const grant: AccessGrant = {
+      id: `ag_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
+      deviceId: updatedRequest.deviceId,
+      developerId: updatedRequest.developerId,
+      developerName: updatedRequest.developerName,
+      scopes: updatedRequest.scopes,
+      token: `token_${Math.random().toString(36).substring(2, 32).toUpperCase()}`,
+      expiresAt: updatedRequest.requestedUntil,
+      createdAt: new Date().toISOString(),
+    }
+
+    await ServerDataStore.addAccessGrant(grant)
+    await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'access.approved', 'access_request', requestId)
+
+    result = { request: updatedRequest, grant, order: updatedPayoutOrder }
+  } else if (action === 'reject') {
+    // TODO: wrap refund-required marking and request rejection in one Postgres transaction.
+    // Manual refund state is marked first so a paid request is not rejected without refund tracking.
     let refundOrder: Order | undefined
     try {
       for (const paidOrder of paidOrders) {
@@ -355,6 +356,11 @@ export async function POST(
         error: error instanceof Error ? error.message : String(error),
       })
       return NextResponse.json({ error: 'Failed to mark paid order for refund review.' }, { status: 500 })
+    }
+
+    const updatedRequest = await ServerDataStore.updateAccessRequest(requestId, { status: 'rejected' })
+    if (!updatedRequest) {
+      return NextResponse.json({ error: 'Failed to update access request' }, { status: 500 })
     }
 
     await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'access.rejected', 'access_request', requestId)
