@@ -15,6 +15,7 @@ import {
   getActivePendingOrder,
   getPaidOrders,
   isPaidOrLaterPaymentStatus,
+  markPaymentCancelled,
   markPaymentFailed,
 } from '@/lib/payment-state'
 
@@ -127,6 +128,25 @@ async function syncReusableOrder(
   const statusResponse = await getMidtransStatusWithRetry(coreApi, order)
   const syncResult = await applyMidtransStatusToOrder(statusResponse)
   return syncResult?.order || order
+}
+
+async function cancelPreparedMidtransTransaction(
+  coreApi: InstanceType<typeof midtransClient.CoreApi>,
+  order: Order
+): Promise<void> {
+  try {
+    await coreApi.transaction.cancel(order.midtransOrderId)
+    console.info('midtrans.token_preparation_cancelled', {
+      orderId: order.id,
+      midtransOrderId: order.midtransOrderId,
+    })
+  } catch (error) {
+    console.warn('midtrans.token_preparation_cancel_failed', {
+      orderId: order.id,
+      midtransOrderId: order.midtransOrderId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
 }
 
 async function getPaymentTokenFromActivePendingOrder(
@@ -320,6 +340,37 @@ export async function POST(request: Request) {
       midtransOrderId: order.midtransOrderId,
       error: error instanceof Error ? error.message : String(error),
     })
+
+    try {
+      const conflictOrders = await ServerDataStore.getOrdersByAccessRequestId(accessRequest.id)
+      const conflictPendingOrder = getActivePendingOrder(conflictOrders)
+
+      if (conflictPendingOrder) {
+        const conflictResult = await getPaymentTokenFromActivePendingOrder(
+          coreApi,
+          conflictPendingOrder,
+          accessRequest.id,
+          midtransConfig.isProduction
+        )
+
+        if (conflictResult.response) {
+          console.info('midtrans.pending_order_conflict_reused', {
+            accessRequestId: accessRequest.id,
+            orderId: conflictPendingOrder.id,
+            midtransOrderId: conflictPendingOrder.midtransOrderId,
+            responseStatus: conflictResult.response.status,
+          })
+          return conflictResult.response
+        }
+      }
+    } catch (syncError) {
+      console.error('midtrans.pending_order_conflict_sync_failed', {
+        accessRequestId: accessRequest.id,
+        error: syncError instanceof Error ? syncError.message : String(syncError),
+      })
+      return NextResponse.json({ error: 'Failed to check existing pending payment after conflict.' }, { status: 502 })
+    }
+
     return NextResponse.json(
       { error: 'A pending payment is already being prepared for this access request. Please retry in a moment.' },
       { status: 409 }
@@ -359,6 +410,37 @@ export async function POST(request: Request) {
       error: error instanceof Error ? error.message : String(error),
     })
     return NextResponse.json({ error: 'Failed to create Midtrans payment token.' }, { status: 502 })
+  }
+
+  const latestAccessRequest = await ServerDataStore.getAccessRequestById(accessRequest.id)
+  const latestPendingOrder = await ServerDataStore.getOrderById(savedPendingOrder.id)
+  if (
+    !latestAccessRequest ||
+    latestAccessRequest.status !== 'pending_payment' ||
+    !latestPendingOrder ||
+    latestPendingOrder.paymentStatus !== 'PENDING'
+  ) {
+    console.warn('midtrans.token_created_after_local_state_changed', {
+      accessRequestId: accessRequest.id,
+      orderId: savedPendingOrder.id,
+      midtransOrderId: savedPendingOrder.midtransOrderId,
+      accessRequestStatus: latestAccessRequest?.status,
+      paymentStatus: latestPendingOrder?.paymentStatus,
+    })
+
+    await cancelPreparedMidtransTransaction(coreApi, savedPendingOrder)
+
+    if (latestPendingOrder?.paymentStatus === 'PENDING') {
+      await ServerDataStore.updateOrder(
+        latestPendingOrder.id,
+        markPaymentCancelled(latestPendingOrder, new Date().toISOString())
+      )
+    }
+
+    return NextResponse.json(
+      { error: 'Payment request is no longer active. Please refresh before trying again.' },
+      { status: 409 }
+    )
   }
 
   const savedOrder = await ServerDataStore.updateOrder(savedPendingOrder.id, {

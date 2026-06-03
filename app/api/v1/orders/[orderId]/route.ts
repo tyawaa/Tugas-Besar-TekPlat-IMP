@@ -45,27 +45,33 @@ export async function POST(
       )
     }
 
-    // TODO: when ServerDataStore supports transactions, commit payout status
-    // and the audit log together so admin settlement history is atomic.
-    const updatedOrder = await ServerDataStore.updateOrder(order.id, {
-      payoutStatus: 'PAID_OUT',
-      paidOutAt: new Date().toISOString(),
-    })
-
-    if (!updatedOrder) {
+    let updatedOrder
+    try {
+      updatedOrder = await ServerDataStore.markOrderPaidOutWithAudit({
+        orderId: order.id,
+        updates: {
+          payoutStatus: 'PAID_OUT',
+          paidOutAt: new Date().toISOString(),
+        },
+        auditLog: {
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          actorRole: currentUser.role,
+          action: 'payout.marked_paid_out',
+          targetType: 'access_request',
+          targetId: order.accessRequestId,
+          outcome: 'success',
+          details: `Order ${order.id} owner payout ${order.currency} ${order.ownerAmount}`,
+        },
+      })
+    } catch (error) {
+      console.error('payout.mark_paid_out_transaction_failed', {
+        orderId: order.id,
+        accessRequestId: order.accessRequestId,
+        error: error instanceof Error ? error.message : String(error),
+      })
       return NextResponse.json({ error: 'Failed to update payout status.' }, { status: 500 })
     }
-
-    await ServerDataStore.logAction(
-      currentUser.id,
-      currentUser.name,
-      currentUser.role,
-      'payout.marked_paid_out',
-      'access_request',
-      order.accessRequestId,
-      'success',
-      `Order ${order.id} owner payout ${order.currency} ${order.ownerAmount}`
-    )
 
     return NextResponse.json({ order: updatedOrder })
   }
@@ -85,26 +91,32 @@ export async function POST(
       )
     }
 
-    // TODO: when ServerDataStore supports transactions, commit manual refund
-    // completion and the audit log together so refund history is atomic.
-    const updatedOrder = await ServerDataStore.updateOrder(order.id, {
-      payoutStatus: 'REFUNDED',
-    })
-
-    if (!updatedOrder) {
+    let updatedOrder
+    try {
+      updatedOrder = await ServerDataStore.markOrderRefundedWithAudit({
+        orderId: order.id,
+        updates: {
+          payoutStatus: 'REFUNDED',
+        },
+        auditLog: {
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          actorRole: currentUser.role,
+          action: 'payout.marked_refunded',
+          targetType: 'access_request',
+          targetId: order.accessRequestId,
+          outcome: 'success',
+          details: `Order ${order.id} marked refunded`,
+        },
+      })
+    } catch (error) {
+      console.error('payout.mark_refunded_transaction_failed', {
+        orderId: order.id,
+        accessRequestId: order.accessRequestId,
+        error: error instanceof Error ? error.message : String(error),
+      })
       return NextResponse.json({ error: 'Failed to update refund status.' }, { status: 500 })
     }
-
-    await ServerDataStore.logAction(
-      currentUser.id,
-      currentUser.name,
-      currentUser.role,
-      'payout.marked_refunded',
-      'access_request',
-      order.accessRequestId,
-      'success',
-      `Order ${order.id} marked refunded`
-    )
 
     return NextResponse.json({ order: updatedOrder })
   }

@@ -14,8 +14,8 @@ import {
   canMarkPayoutEligible,
   canMarkRefundRequired,
   canTransitionAccessRequestStatus,
+  getActivePendingOrder,
   getPaidOrders,
-  getReusablePendingOrder,
   isPaidOrLaterPaymentStatus,
   markPaymentCancelled,
   markRefundRequired,
@@ -28,6 +28,11 @@ interface CancelResult {
   request: AccessRequest
   order?: Order
   refundRequired?: boolean
+}
+
+interface OrderUpdateOperation {
+  orderId: string
+  updates: Partial<Order>
 }
 
 async function getMidtransStatusWithRetry(
@@ -88,24 +93,6 @@ async function syncOrderForCancellation(
   return result?.order || order
 }
 
-async function markOrderCancelled(order: Order): Promise<Order> {
-  const updatedOrder = await ServerDataStore.updateOrder(order.id, markPaymentCancelled(order, new Date().toISOString()))
-  if (!updatedOrder) {
-    throw new Error(`Failed to mark order ${order.id} as cancelled.`)
-  }
-  return updatedOrder
-}
-
-async function markOrderRefundRequired(order: Order): Promise<Order> {
-  if (!canMarkRefundRequired(order)) return order
-
-  const updatedOrder = await ServerDataStore.updateOrder(order.id, markRefundRequired(order, new Date().toISOString()))
-  if (!updatedOrder) {
-    throw new Error(`Failed to mark refund required for order ${order.id}.`)
-  }
-  return updatedOrder
-}
-
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ requestId: string }> }
@@ -164,94 +151,129 @@ export async function POST(
     }
 
     const orders = await ServerDataStore.getOrdersByAccessRequestId(requestItem.id)
-    const pendingOrder = getReusablePendingOrder(orders)
+    const pendingOrder = getActivePendingOrder(orders)
     let relatedOrder: Order | undefined
     let refundRequired = false
+    const orderUpdates: OrderUpdateOperation[] = []
 
-    // TODO: wrap Midtrans/local order cancellation or refund marking with request cancellation in one Postgres transaction.
-    // The local order/refund state is updated before the request is cancelled to avoid losing paid-payment review state.
     if (pendingOrder) {
-      const coreApi = new midtransClient.CoreApi(getMidtransConfig())
-      let syncedOrder: Order
-
-      try {
-        syncedOrder = await syncOrderForCancellation(coreApi, pendingOrder)
-      } catch (error) {
-        if (error instanceof MidtransPaymentValidationError) {
-          console.error('midtrans.cancel_validation_failed', {
-            accessRequestId: requestItem.id,
-            orderId: pendingOrder.id,
-            midtransOrderId: pendingOrder.midtransOrderId,
-            validationContext: error.context,
-          })
-          return NextResponse.json({ error: 'Midtrans payment data failed validation.' }, { status: 400 })
-        }
-
-        console.error('midtrans.cancel_status_sync_failed', {
+      if (!pendingOrder.snapToken) {
+        console.info('midtrans.cancel_token_preparation_pending', {
           accessRequestId: requestItem.id,
           orderId: pendingOrder.id,
           midtransOrderId: pendingOrder.midtransOrderId,
-          error: error instanceof Error ? error.message : String(error),
         })
-        return NextResponse.json({ error: 'Failed to check Midtrans status before cancellation.' }, { status: 502 })
-      }
 
-      if (syncedOrder.paymentStatus === 'PENDING') {
-        try {
-          await cancelMidtransTransactionWithRetry(coreApi, syncedOrder)
-          relatedOrder = await markOrderCancelled(syncedOrder)
-        } catch (error) {
-          console.error('midtrans.cancel_pending_failed', {
-            accessRequestId: requestItem.id,
-            orderId: syncedOrder.id,
-            midtransOrderId: syncedOrder.midtransOrderId,
-            error: error instanceof Error ? error.message : String(error),
-          })
-          return NextResponse.json({ error: 'Failed to cancel pending Midtrans transaction.' }, { status: 502 })
-        }
-      } else if (isPaidOrLaterPaymentStatus(syncedOrder.paymentStatus)) {
-        try {
-          relatedOrder = await markOrderRefundRequired(syncedOrder)
-          refundRequired = relatedOrder.payoutStatus === 'REFUND_REQUIRED'
-        } catch (error) {
-          console.error('midtrans.cancel_refund_required_failed', {
-            accessRequestId: requestItem.id,
-            orderId: syncedOrder.id,
-            midtransOrderId: syncedOrder.midtransOrderId,
-            error: error instanceof Error ? error.message : String(error),
-          })
-          return NextResponse.json({ error: 'Failed to move paid request into refund review.' }, { status: 500 })
-        }
+        relatedOrder = pendingOrder
+        orderUpdates.push({
+          orderId: pendingOrder.id,
+          updates: markPaymentCancelled(pendingOrder, new Date().toISOString()),
+        })
       } else {
-        relatedOrder = syncedOrder
+        const coreApi = new midtransClient.CoreApi(getMidtransConfig())
+        let syncedOrder: Order
+
+        try {
+          syncedOrder = await syncOrderForCancellation(coreApi, pendingOrder)
+        } catch (error) {
+          if (error instanceof MidtransPaymentValidationError) {
+            console.error('midtrans.cancel_validation_failed', {
+              accessRequestId: requestItem.id,
+              orderId: pendingOrder.id,
+              midtransOrderId: pendingOrder.midtransOrderId,
+              validationContext: error.context,
+            })
+            return NextResponse.json({ error: 'Midtrans payment data failed validation.' }, { status: 400 })
+          }
+
+          console.error('midtrans.cancel_status_sync_failed', {
+            accessRequestId: requestItem.id,
+            orderId: pendingOrder.id,
+            midtransOrderId: pendingOrder.midtransOrderId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+          return NextResponse.json({ error: 'Failed to check Midtrans status before cancellation.' }, { status: 502 })
+        }
+
+        if (syncedOrder.paymentStatus === 'PENDING') {
+          try {
+            await cancelMidtransTransactionWithRetry(coreApi, syncedOrder)
+            relatedOrder = syncedOrder
+            orderUpdates.push({
+              orderId: syncedOrder.id,
+              updates: markPaymentCancelled(syncedOrder, new Date().toISOString()),
+            })
+          } catch (error) {
+            console.error('midtrans.cancel_pending_failed', {
+              accessRequestId: requestItem.id,
+              orderId: syncedOrder.id,
+              midtransOrderId: syncedOrder.midtransOrderId,
+              error: error instanceof Error ? error.message : String(error),
+            })
+            return NextResponse.json({ error: 'Failed to cancel pending Midtrans transaction.' }, { status: 502 })
+          }
+        } else if (isPaidOrLaterPaymentStatus(syncedOrder.paymentStatus)) {
+          relatedOrder = syncedOrder
+          if (canMarkRefundRequired(syncedOrder)) {
+            refundRequired = true
+            orderUpdates.push({
+              orderId: syncedOrder.id,
+              updates: markRefundRequired(syncedOrder, new Date().toISOString()),
+            })
+          }
+        } else {
+          relatedOrder = syncedOrder
+        }
       }
     }
 
     if (!relatedOrder) {
       const paidOrders = getPaidOrders(orders)
-      try {
-        for (const paidOrder of paidOrders) {
-          const refundOrder = await markOrderRefundRequired(paidOrder)
-          relatedOrder = relatedOrder || refundOrder
-          refundRequired = refundRequired || refundOrder.payoutStatus === 'REFUND_REQUIRED'
+      for (const paidOrder of paidOrders) {
+        relatedOrder = relatedOrder || paidOrder
+        if (canMarkRefundRequired(paidOrder)) {
+          refundRequired = true
+          orderUpdates.push({
+            orderId: paidOrder.id,
+            updates: markRefundRequired(paidOrder, new Date().toISOString()),
+          })
         }
-      } catch (error) {
-        console.error('midtrans.cancel_existing_paid_refund_required_failed', {
-          accessRequestId: requestItem.id,
-          error: error instanceof Error ? error.message : String(error),
-        })
-        return NextResponse.json({ error: 'Failed to move paid request into refund review.' }, { status: 500 })
       }
     }
 
-    const updatedRequest = await ServerDataStore.updateAccessRequest(requestId, { status: 'cancelled' })
-    if (!updatedRequest) {
+    let cancelResult: { request: AccessRequest; orders: Order[] }
+    try {
+      cancelResult = await ServerDataStore.cancelAccessRequestWithPayment({
+        requestId,
+        orderUpdates,
+        auditLog: {
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          actorRole: currentUser.role,
+          action: 'access.cancelled',
+          targetType: 'access_request',
+          targetId: requestId,
+          outcome: 'success',
+        },
+      })
+    } catch (error) {
+      console.error('access.cancel_transaction_failed', {
+        accessRequestId: requestItem.id,
+        orderUpdateCount: orderUpdates.length,
+        error: error instanceof Error ? error.message : String(error),
+      })
       return NextResponse.json({ error: 'Failed to cancel access request' }, { status: 500 })
     }
 
-    await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'access.cancelled', 'access_request', requestId)
+    if (relatedOrder) {
+      relatedOrder = cancelResult.orders.find(order => order.id === relatedOrder?.id) || relatedOrder
+    } else {
+      relatedOrder = cancelResult.orders[0]
+    }
+    refundRequired = refundRequired || cancelResult.orders.some(order => order.payoutStatus === 'REFUND_REQUIRED')
+
     const result: CancelResult = {
-      request: updatedRequest,
+      request: cancelResult.request,
       order: relatedOrder,
       refundRequired,
     }
@@ -296,75 +318,85 @@ export async function POST(
       )
     }
 
-    // TODO: wrap payout eligibility, request approval, and grant creation in a single Postgres transaction.
-    // Until ServerDataStore exposes transactions, update payout first so access is not granted before payout is safe.
-    let updatedPayoutOrder: Order | undefined
-    if (payoutOrder) {
-      const payoutUpdate = await ServerDataStore.updateOrder(payoutOrder.id, { payoutStatus: 'ELIGIBLE' })
-      if (!payoutUpdate) {
-        return NextResponse.json({ error: 'Failed to mark owner payout as eligible.' }, { status: 500 })
-      }
-      updatedPayoutOrder = payoutUpdate
-    }
-
-    try {
-      for (const duplicatePaidOrder of paidOrders.filter(order => order.id !== payoutOrder?.id)) {
-        if (canMarkRefundRequired(duplicatePaidOrder)) {
-          await markOrderRefundRequired(duplicatePaidOrder)
-        }
-      }
-    } catch (error) {
-      console.error('access.approve_duplicate_refund_failed', {
-        accessRequestId: requestItem.id,
-        error: error instanceof Error ? error.message : String(error),
-      })
-      return NextResponse.json({ error: 'Failed to mark duplicate paid order for refund review.' }, { status: 500 })
-    }
-
-    const updatedRequest = await ServerDataStore.updateAccessRequest(requestId, { status: 'approved' })
-    if (!updatedRequest) {
-      return NextResponse.json({ error: 'Failed to update access request' }, { status: 500 })
-    }
-
     const grant: AccessGrant = {
       id: `ag_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
-      deviceId: updatedRequest.deviceId,
-      developerId: updatedRequest.developerId,
-      developerName: updatedRequest.developerName,
-      scopes: updatedRequest.scopes,
+      deviceId: requestItem.deviceId,
+      developerId: requestItem.developerId,
+      developerName: requestItem.developerName,
+      scopes: requestItem.scopes,
       token: `token_${Math.random().toString(36).substring(2, 32).toUpperCase()}`,
-      expiresAt: updatedRequest.requestedUntil,
+      expiresAt: requestItem.requestedUntil,
       createdAt: new Date().toISOString(),
     }
 
-    await ServerDataStore.addAccessGrant(grant)
-    await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'access.approved', 'access_request', requestId)
+    const duplicateRefundUpdates = paidOrders
+      .filter(order => order.id !== payoutOrder?.id)
+      .filter(canMarkRefundRequired)
+      .map((order): OrderUpdateOperation => ({
+        orderId: order.id,
+        updates: markRefundRequired(order, new Date().toISOString()),
+      }))
 
-    result = { request: updatedRequest, grant, order: updatedPayoutOrder }
-  } else if (action === 'reject') {
-    // TODO: wrap refund-required marking and request rejection in one Postgres transaction.
-    // Manual refund state is marked first so a paid request is not rejected without refund tracking.
-    let refundOrder: Order | undefined
     try {
-      for (const paidOrder of paidOrders) {
-        const updatedOrder = await markOrderRefundRequired(paidOrder)
-        refundOrder = refundOrder || updatedOrder
-      }
+      result = await ServerDataStore.approveAccessRequestWithPayment({
+        requestId,
+        payoutOrderUpdate: payoutOrder
+          ? {
+              orderId: payoutOrder.id,
+              updates: { payoutStatus: 'ELIGIBLE' },
+            }
+          : null,
+        duplicateRefundUpdates,
+        grant,
+        auditLog: {
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          actorRole: currentUser.role,
+          action: 'access.approved',
+          targetType: 'access_request',
+          targetId: requestId,
+          outcome: 'success',
+        },
+      })
     } catch (error) {
-      console.error('access.reject_refund_required_failed', {
+      console.error('access.approve_transaction_failed', {
         accessRequestId: requestItem.id,
+        payoutOrderId: payoutOrder?.id,
+        duplicateRefundCount: duplicateRefundUpdates.length,
         error: error instanceof Error ? error.message : String(error),
       })
-      return NextResponse.json({ error: 'Failed to mark paid order for refund review.' }, { status: 500 })
+      return NextResponse.json({ error: 'Failed to approve access request atomically.' }, { status: 500 })
     }
+  } else if (action === 'reject') {
+    const refundUpdates = paidOrders
+      .filter(canMarkRefundRequired)
+      .map((order): OrderUpdateOperation => ({
+        orderId: order.id,
+        updates: markRefundRequired(order, new Date().toISOString()),
+      }))
 
-    const updatedRequest = await ServerDataStore.updateAccessRequest(requestId, { status: 'rejected' })
-    if (!updatedRequest) {
-      return NextResponse.json({ error: 'Failed to update access request' }, { status: 500 })
+    try {
+      result = await ServerDataStore.rejectAccessRequestWithRefund({
+        requestId,
+        refundUpdates,
+        auditLog: {
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          actorRole: currentUser.role,
+          action: 'access.rejected',
+          targetType: 'access_request',
+          targetId: requestId,
+          outcome: 'success',
+        },
+      })
+    } catch (error) {
+      console.error('access.reject_transaction_failed', {
+        accessRequestId: requestItem.id,
+        refundUpdateCount: refundUpdates.length,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return NextResponse.json({ error: 'Failed to reject access request atomically.' }, { status: 500 })
     }
-
-    await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'access.rejected', 'access_request', requestId)
-    result = { request: updatedRequest, order: refundOrder }
   }
 
   return NextResponse.json(result)

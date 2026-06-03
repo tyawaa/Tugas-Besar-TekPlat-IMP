@@ -166,6 +166,22 @@ async function query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
   return result.rows as T[]
 }
 
+async function withTransaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
+  await ensureDatabaseReady()
+  const client = await getPostgresPool().connect()
+  try {
+    await client.query('BEGIN')
+    const result = await operation(client)
+    await client.query('COMMIT')
+    return result
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
 async function initializeDatabase(): Promise<void> {
   const client = await getPostgresPool().connect()
   try {
@@ -884,6 +900,180 @@ async function upsertOrder(order: Order): Promise<Order> {
   return mapOrder(rows[0])
 }
 
+async function getAccessRequestByIdForUpdate(client: PoolClient, id: string): Promise<AccessRequest | null> {
+  const result = await client.query<AccessRequestRow>('SELECT * FROM access_requests WHERE id = $1 FOR UPDATE', [id])
+  return result.rows[0] ? mapAccessRequest(result.rows[0]) : null
+}
+
+async function getOrderByIdForUpdate(client: PoolClient, id: string): Promise<Order | null> {
+  const result = await client.query<OrderRow>('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [id])
+  return result.rows[0] ? mapOrder(result.rows[0]) : null
+}
+
+async function upsertAccessRequestWithClient(client: PoolClient, request: AccessRequest): Promise<AccessRequest> {
+  const result = await client.query<AccessRequestRow>(
+    `INSERT INTO access_requests (
+       id, device_id, developer_id, developer_name, developer_email, purpose,
+       scopes, requested_until, status, billing_snapshot, created_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb, $11)
+     ON CONFLICT (id) DO UPDATE SET
+       device_id = EXCLUDED.device_id,
+       developer_id = EXCLUDED.developer_id,
+       developer_name = EXCLUDED.developer_name,
+       developer_email = EXCLUDED.developer_email,
+       purpose = EXCLUDED.purpose,
+       scopes = EXCLUDED.scopes,
+       requested_until = EXCLUDED.requested_until,
+       status = EXCLUDED.status,
+       billing_snapshot = EXCLUDED.billing_snapshot,
+       created_at = EXCLUDED.created_at
+     RETURNING *`,
+    accessRequestParams(request)
+  )
+  return mapAccessRequest(result.rows[0])
+}
+
+async function upsertOrderWithClient(client: PoolClient, order: Order): Promise<Order> {
+  const result = await client.query<OrderRow>(
+    `INSERT INTO orders (
+       id, access_request_id, device_id, buyer_id, seller_id, total_amount, currency,
+       payment_method, payment_status, payout_status, platform_fee, owner_amount, paid_out_at,
+       snap_token, snap_redirect_url, midtrans_order_id, billing_snapshot, created_at, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19)
+     ON CONFLICT (id) DO UPDATE SET
+       access_request_id = EXCLUDED.access_request_id,
+       device_id = EXCLUDED.device_id,
+       buyer_id = EXCLUDED.buyer_id,
+       seller_id = EXCLUDED.seller_id,
+       total_amount = EXCLUDED.total_amount,
+       currency = EXCLUDED.currency,
+       payment_method = EXCLUDED.payment_method,
+       payment_status = EXCLUDED.payment_status,
+       payout_status = EXCLUDED.payout_status,
+       platform_fee = EXCLUDED.platform_fee,
+       owner_amount = EXCLUDED.owner_amount,
+       paid_out_at = EXCLUDED.paid_out_at,
+       snap_token = EXCLUDED.snap_token,
+       snap_redirect_url = EXCLUDED.snap_redirect_url,
+       midtrans_order_id = EXCLUDED.midtrans_order_id,
+       billing_snapshot = EXCLUDED.billing_snapshot,
+       created_at = EXCLUDED.created_at,
+       updated_at = EXCLUDED.updated_at
+     RETURNING *`,
+    orderParams(order)
+  )
+  return mapOrder(result.rows[0])
+}
+
+async function updateAccessRequestStatusWithClient(
+  client: PoolClient,
+  id: string,
+  nextStatus: AccessRequest['status'],
+  allowedCurrentStatuses: AccessRequest['status'][]
+): Promise<AccessRequest> {
+  const current = await getAccessRequestByIdForUpdate(client, id)
+  if (!current) throw new Error(`Access request ${id} was not found during transaction.`)
+  if (!allowedCurrentStatuses.includes(current.status)) {
+    throw new Error(`Access request ${id} cannot move from ${current.status} to ${nextStatus}.`)
+  }
+  return upsertAccessRequestWithClient(client, { ...current, status: nextStatus })
+}
+
+async function updateOrderWithClient(
+  client: PoolClient,
+  id: string,
+  updates: Partial<Order>
+): Promise<Order> {
+  const current = await getOrderByIdForUpdate(client, id)
+  if (!current) throw new Error(`Order ${id} was not found during transaction.`)
+  return upsertOrderWithClient(client, { ...current, ...updates, updatedAt: updates.updatedAt || new Date().toISOString() })
+}
+
+async function updateOrderWithStateGuardClient(
+  client: PoolClient,
+  id: string,
+  updates: Partial<Order>,
+  allowedPaymentStatuses: Order['paymentStatus'][],
+  allowedPayoutStatuses: Order['payoutStatus'][]
+): Promise<Order> {
+  const current = await getOrderByIdForUpdate(client, id)
+  if (!current) throw new Error(`Order ${id} was not found during transaction.`)
+  if (!allowedPaymentStatuses.includes(current.paymentStatus)) {
+    throw new Error(`Order ${id} payment status ${current.paymentStatus} cannot be updated in this action.`)
+  }
+  if (!allowedPayoutStatuses.includes(current.payoutStatus)) {
+    throw new Error(`Order ${id} payout status ${current.payoutStatus} cannot be updated in this action.`)
+  }
+  return upsertOrderWithClient(client, { ...current, ...updates, updatedAt: updates.updatedAt || new Date().toISOString() })
+}
+
+async function addAccessGrantWithClient(client: PoolClient, grant: AccessGrant): Promise<AccessGrant> {
+  const result = await client.query<AccessGrantRow>(
+    `INSERT INTO access_grants (
+       id, device_id, developer_id, developer_name, scopes, expires_at, token, created_at
+     ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
+     ON CONFLICT (id) DO UPDATE SET
+       device_id = EXCLUDED.device_id,
+       developer_id = EXCLUDED.developer_id,
+       developer_name = EXCLUDED.developer_name,
+       scopes = EXCLUDED.scopes,
+       expires_at = EXCLUDED.expires_at,
+       token = EXCLUDED.token,
+       created_at = EXCLUDED.created_at
+     RETURNING *`,
+    accessGrantParams(grant)
+  )
+  return mapAccessGrant(result.rows[0])
+}
+
+async function addAuditLogWithClient(client: PoolClient, log: AuditLog): Promise<AuditLog> {
+  const result = await client.query<AuditLogRow>(
+    `INSERT INTO audit_logs (
+       id, occurred_at, actor_id, actor_name, actor_role, action,
+       target_type, target_id, outcome, details
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     RETURNING *`,
+    auditLogParams(log)
+  )
+  return mapAuditLog(result.rows[0])
+}
+
+interface OrderUpdateOperation {
+  orderId: string
+  updates: Partial<Order>
+}
+
+interface ApproveAccessRequestTransactionInput {
+  requestId: string
+  allowedCurrentStatuses: AccessRequest['status'][]
+  payoutOrderUpdate: OrderUpdateOperation | null
+  duplicateRefundUpdates: OrderUpdateOperation[]
+  grant: AccessGrant
+  auditLog: AuditLog
+}
+
+interface RejectAccessRequestTransactionInput {
+  requestId: string
+  allowedCurrentStatuses: AccessRequest['status'][]
+  refundUpdates: OrderUpdateOperation[]
+  auditLog: AuditLog
+}
+
+interface CancelAccessRequestTransactionInput {
+  requestId: string
+  allowedCurrentStatuses: AccessRequest['status'][]
+  orderUpdates: OrderUpdateOperation[]
+  auditLog: AuditLog
+}
+
+interface AdminOrderActionTransactionInput {
+  orderId: string
+  updates: Partial<Order>
+  allowedPaymentStatuses: Order['paymentStatus'][]
+  allowedPayoutStatuses: Order['payoutStatus'][]
+  auditLog: AuditLog
+}
+
 export class PostgresDataStore {
   static async getAllUsers(): Promise<StoredUser[]> {
     const rows = await query<UserRow>('SELECT * FROM users ORDER BY created_at ASC, id ASC')
@@ -1055,6 +1245,120 @@ export class PostgresDataStore {
     const current = await this.getOrderById(id)
     if (!current) return null
     return upsertOrder({ ...current, ...updates, updatedAt: updates.updatedAt || new Date().toISOString() })
+  }
+
+  static async approveAccessRequestWithPaymentTransaction(
+    input: ApproveAccessRequestTransactionInput
+  ): Promise<{ request: AccessRequest; grant: AccessGrant; order: Order | null }> {
+    return withTransaction(async (client) => {
+      let payoutOrder: Order | null = null
+
+      if (input.payoutOrderUpdate) {
+        payoutOrder = await updateOrderWithClient(
+          client,
+          input.payoutOrderUpdate.orderId,
+          input.payoutOrderUpdate.updates
+        )
+      }
+
+      for (const refundUpdate of input.duplicateRefundUpdates) {
+        await updateOrderWithClient(client, refundUpdate.orderId, refundUpdate.updates)
+      }
+
+      const updatedRequest = await updateAccessRequestStatusWithClient(
+        client,
+        input.requestId,
+        'approved',
+        input.allowedCurrentStatuses
+      )
+      const grant = await addAccessGrantWithClient(client, input.grant)
+      await addAuditLogWithClient(client, input.auditLog)
+
+      return {
+        request: updatedRequest,
+        grant,
+        order: payoutOrder,
+      }
+    })
+  }
+
+  static async rejectAccessRequestWithRefundTransaction(
+    input: RejectAccessRequestTransactionInput
+  ): Promise<{ request: AccessRequest; order: Order | null }> {
+    return withTransaction(async (client) => {
+      let refundOrder: Order | null = null
+
+      for (const refundUpdate of input.refundUpdates) {
+        const updatedOrder = await updateOrderWithClient(client, refundUpdate.orderId, refundUpdate.updates)
+        refundOrder = refundOrder || updatedOrder
+      }
+
+      const updatedRequest = await updateAccessRequestStatusWithClient(
+        client,
+        input.requestId,
+        'rejected',
+        input.allowedCurrentStatuses
+      )
+      await addAuditLogWithClient(client, input.auditLog)
+
+      return {
+        request: updatedRequest,
+        order: refundOrder,
+      }
+    })
+  }
+
+  static async cancelAccessRequestWithPaymentTransaction(
+    input: CancelAccessRequestTransactionInput
+  ): Promise<{ request: AccessRequest; orders: Order[] }> {
+    return withTransaction(async (client) => {
+      const updatedOrders: Order[] = []
+
+      for (const orderUpdate of input.orderUpdates) {
+        updatedOrders.push(await updateOrderWithClient(client, orderUpdate.orderId, orderUpdate.updates))
+      }
+
+      const updatedRequest = await updateAccessRequestStatusWithClient(
+        client,
+        input.requestId,
+        'cancelled',
+        input.allowedCurrentStatuses
+      )
+      await addAuditLogWithClient(client, input.auditLog)
+
+      return {
+        request: updatedRequest,
+        orders: updatedOrders,
+      }
+    })
+  }
+
+  static async markOrderPaidOutWithAuditTransaction(input: AdminOrderActionTransactionInput): Promise<Order> {
+    return withTransaction(async (client) => {
+      const updatedOrder = await updateOrderWithStateGuardClient(
+        client,
+        input.orderId,
+        input.updates,
+        input.allowedPaymentStatuses,
+        input.allowedPayoutStatuses
+      )
+      await addAuditLogWithClient(client, input.auditLog)
+      return updatedOrder
+    })
+  }
+
+  static async markOrderRefundedWithAuditTransaction(input: AdminOrderActionTransactionInput): Promise<Order> {
+    return withTransaction(async (client) => {
+      const updatedOrder = await updateOrderWithStateGuardClient(
+        client,
+        input.orderId,
+        input.updates,
+        input.allowedPaymentStatuses,
+        input.allowedPayoutStatuses
+      )
+      await addAuditLogWithClient(client, input.auditLog)
+      return updatedOrder
+    })
   }
 
   static async getAllTelemetry(): Promise<TelemetryRecord[]> {

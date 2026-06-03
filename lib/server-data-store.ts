@@ -48,6 +48,48 @@ const REDIS_PREFIX = process.env.IOTBRIDGE_REDIS_PREFIX || 'iotbridge'
 
 type CollectionName = keyof typeof FILES
 
+interface OrderUpdateOperation {
+  orderId: string
+  updates: Partial<Order>
+}
+
+interface AuditLogInput {
+  actorId: string
+  actorName: string
+  actorRole: UserRole
+  action: string
+  targetType: AuditLog['targetType']
+  targetId: string
+  outcome: AuditLog['outcome']
+  details?: string
+}
+
+interface ApproveAccessRequestWithPaymentInput {
+  requestId: string
+  payoutOrderUpdate: OrderUpdateOperation | null
+  duplicateRefundUpdates: OrderUpdateOperation[]
+  grant: AccessGrant
+  auditLog: AuditLogInput
+}
+
+interface RejectAccessRequestWithRefundInput {
+  requestId: string
+  refundUpdates: OrderUpdateOperation[]
+  auditLog: AuditLogInput
+}
+
+interface CancelAccessRequestWithPaymentInput {
+  requestId: string
+  orderUpdates: OrderUpdateOperation[]
+  auditLog: AuditLogInput
+}
+
+interface AdminOrderActionInput {
+  orderId: string
+  updates: Partial<Order>
+  auditLog: AuditLogInput
+}
+
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -148,6 +190,21 @@ async function writeCollection(collection: CollectionName, data: unknown): Promi
 
 function generateId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`
+}
+
+function createAuditLog(input: AuditLogInput): AuditLog {
+  return {
+    id: generateId('log'),
+    timestamp: new Date().toISOString(),
+    actorId: input.actorId,
+    actorName: input.actorName,
+    actorRole: input.actorRole,
+    action: input.action,
+    targetType: input.targetType,
+    targetId: input.targetId,
+    outcome: input.outcome,
+    details: input.details,
+  }
 }
 
 export class ServerDataStore {
@@ -433,6 +490,158 @@ export class ServerDataStore {
     return orders[index]
   }
 
+  static async approveAccessRequestWithPayment(
+    input: ApproveAccessRequestWithPaymentInput
+  ): Promise<{ request: AccessRequest; grant: AccessGrant; order?: Order }> {
+    const auditLog = createAuditLog(input.auditLog)
+
+    if (isPostgresConfigured()) {
+      const result = await PostgresDataStore.approveAccessRequestWithPaymentTransaction({
+        requestId: input.requestId,
+        allowedCurrentStatuses: ['pending'],
+        payoutOrderUpdate: input.payoutOrderUpdate,
+        duplicateRefundUpdates: input.duplicateRefundUpdates,
+        grant: input.grant,
+        auditLog,
+      })
+      return {
+        request: result.request,
+        grant: result.grant,
+        order: result.order || undefined,
+      }
+    }
+
+    let payoutOrder: Order | undefined
+    if (input.payoutOrderUpdate) {
+      const updatedOrder = await this.updateOrder(input.payoutOrderUpdate.orderId, input.payoutOrderUpdate.updates)
+      if (!updatedOrder) throw new Error(`Failed to update payout order ${input.payoutOrderUpdate.orderId}.`)
+      payoutOrder = updatedOrder
+    }
+
+    for (const refundUpdate of input.duplicateRefundUpdates) {
+      const updatedOrder = await this.updateOrder(refundUpdate.orderId, refundUpdate.updates)
+      if (!updatedOrder) throw new Error(`Failed to mark duplicate order ${refundUpdate.orderId} for refund review.`)
+    }
+
+    const updatedRequest = await this.updateAccessRequest(input.requestId, { status: 'approved' })
+    if (!updatedRequest) throw new Error(`Failed to approve access request ${input.requestId}.`)
+
+    const grant = await this.addAccessGrant(input.grant)
+    await this.addAuditLog(auditLog)
+
+    return {
+      request: updatedRequest,
+      grant,
+      order: payoutOrder,
+    }
+  }
+
+  static async rejectAccessRequestWithRefund(
+    input: RejectAccessRequestWithRefundInput
+  ): Promise<{ request: AccessRequest; order?: Order }> {
+    const auditLog = createAuditLog(input.auditLog)
+
+    if (isPostgresConfigured()) {
+      const result = await PostgresDataStore.rejectAccessRequestWithRefundTransaction({
+        requestId: input.requestId,
+        allowedCurrentStatuses: ['pending'],
+        refundUpdates: input.refundUpdates,
+        auditLog,
+      })
+      return {
+        request: result.request,
+        order: result.order || undefined,
+      }
+    }
+
+    let refundOrder: Order | undefined
+    for (const refundUpdate of input.refundUpdates) {
+      const updatedOrder = await this.updateOrder(refundUpdate.orderId, refundUpdate.updates)
+      if (!updatedOrder) throw new Error(`Failed to mark order ${refundUpdate.orderId} for refund review.`)
+      refundOrder = refundOrder || updatedOrder
+    }
+
+    const updatedRequest = await this.updateAccessRequest(input.requestId, { status: 'rejected' })
+    if (!updatedRequest) throw new Error(`Failed to reject access request ${input.requestId}.`)
+
+    await this.addAuditLog(auditLog)
+
+    return {
+      request: updatedRequest,
+      order: refundOrder,
+    }
+  }
+
+  static async cancelAccessRequestWithPayment(
+    input: CancelAccessRequestWithPaymentInput
+  ): Promise<{ request: AccessRequest; orders: Order[] }> {
+    const auditLog = createAuditLog(input.auditLog)
+
+    if (isPostgresConfigured()) {
+      return PostgresDataStore.cancelAccessRequestWithPaymentTransaction({
+        requestId: input.requestId,
+        allowedCurrentStatuses: ['pending', 'pending_payment'],
+        orderUpdates: input.orderUpdates,
+        auditLog,
+      })
+    }
+
+    const updatedOrders: Order[] = []
+    for (const orderUpdate of input.orderUpdates) {
+      const updatedOrder = await this.updateOrder(orderUpdate.orderId, orderUpdate.updates)
+      if (!updatedOrder) throw new Error(`Failed to update order ${orderUpdate.orderId} during cancellation.`)
+      updatedOrders.push(updatedOrder)
+    }
+
+    const updatedRequest = await this.updateAccessRequest(input.requestId, { status: 'cancelled' })
+    if (!updatedRequest) throw new Error(`Failed to cancel access request ${input.requestId}.`)
+
+    await this.addAuditLog(auditLog)
+
+    return {
+      request: updatedRequest,
+      orders: updatedOrders,
+    }
+  }
+
+  static async markOrderPaidOutWithAudit(input: AdminOrderActionInput): Promise<Order> {
+    const auditLog = createAuditLog(input.auditLog)
+
+    if (isPostgresConfigured()) {
+      return PostgresDataStore.markOrderPaidOutWithAuditTransaction({
+        orderId: input.orderId,
+        updates: input.updates,
+        allowedPaymentStatuses: ['PAID'],
+        allowedPayoutStatuses: ['ELIGIBLE'],
+        auditLog,
+      })
+    }
+
+    const updatedOrder = await this.updateOrder(input.orderId, input.updates)
+    if (!updatedOrder) throw new Error(`Failed to mark order ${input.orderId} paid out.`)
+    await this.addAuditLog(auditLog)
+    return updatedOrder
+  }
+
+  static async markOrderRefundedWithAudit(input: AdminOrderActionInput): Promise<Order> {
+    const auditLog = createAuditLog(input.auditLog)
+
+    if (isPostgresConfigured()) {
+      return PostgresDataStore.markOrderRefundedWithAuditTransaction({
+        orderId: input.orderId,
+        updates: input.updates,
+        allowedPaymentStatuses: ['PAID', 'REFUNDED', 'PARTIAL_REFUND', 'CHARGEBACK', 'PARTIAL_CHARGEBACK'],
+        allowedPayoutStatuses: ['REFUND_REQUIRED'],
+        auditLog,
+      })
+    }
+
+    const updatedOrder = await this.updateOrder(input.orderId, input.updates)
+    if (!updatedOrder) throw new Error(`Failed to mark order ${input.orderId} refunded.`)
+    await this.addAuditLog(auditLog)
+    return updatedOrder
+  }
+
   static async getAllTelemetry(): Promise<TelemetryRecord[]> {
     if (isPostgresConfigured()) return PostgresDataStore.getAllTelemetry()
     return this.getTelemetryFile()
@@ -496,9 +705,7 @@ export class ServerDataStore {
     outcome: 'success' | 'failure' = 'success',
     details?: string
   ): Promise<AuditLog> {
-    const log: AuditLog = {
-      id: generateId('log'),
-      timestamp: new Date().toISOString(),
+    const log = createAuditLog({
       actorId,
       actorName,
       actorRole,
@@ -507,7 +714,7 @@ export class ServerDataStore {
       targetId,
       outcome,
       details,
-    }
+    })
     return this.addAuditLog(log)
   }
 }
