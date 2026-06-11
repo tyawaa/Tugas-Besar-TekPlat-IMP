@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { TelemetryService, TelemetryServiceError } from '@/lib/services/telemetry-service'
+import { consumeRateLimit, TELEMETRY_INGESTION_RATE_LIMIT } from '@/lib/rate-limit'
 
 export async function POST(request: Request) {
   let body: Record<string, unknown>
@@ -14,6 +15,11 @@ export async function POST(request: Request) {
     request.headers.get('x-device-key') ||
     (typeof body.deviceKey === 'string' ? body.deviceKey : '') ||
     (typeof body.apiKey === 'string' ? body.apiKey : '')
+
+  const rateLimitResponse = consumeRateLimit(request, TELEMETRY_INGESTION_RATE_LIMIT, [
+    { name: 'device', value: deviceId },
+  ])
+  if (rateLimitResponse) return rateLimitResponse
 
   try {
     const record = await TelemetryService.ingestTelemetry({

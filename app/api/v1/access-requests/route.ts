@@ -4,6 +4,8 @@ import { requireCurrentUser } from '@/lib/auth-server'
 import { isGrantActive } from '@/lib/access-control'
 import { hasUserRole } from '@/lib/auth-types'
 import { createBillingSnapshot } from '@/lib/billing-snapshot'
+import { ACCESS_REQUEST_RATE_LIMIT, consumeRateLimit } from '@/lib/rate-limit'
+import { createSecureId } from '@/lib/secret-storage'
 
 export async function GET(request: Request) {
   const currentUser = await requireCurrentUser(request)
@@ -55,6 +57,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Missing required fields to create access request.' }, { status: 400 })
   }
 
+  const rateLimitResponse = consumeRateLimit(request, ACCESS_REQUEST_RATE_LIMIT, [
+    { name: 'user', value: currentUser.id },
+    { name: 'device', value: String(deviceId) },
+  ])
+  if (rateLimitResponse) return rateLimitResponse
+
   const requests = await ServerDataStore.getAllAccessRequests()
   const hasPendingRequest = requests.some(request =>
     request.deviceId === deviceId &&
@@ -93,7 +101,7 @@ export async function POST(request: Request) {
     : undefined
 
   const requestItem = {
-    id: `ar_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
+    id: createSecureId('ar'),
     deviceId,
     developerId: currentUser.id,
     developerName: currentUser.name,

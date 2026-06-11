@@ -3,6 +3,7 @@ import { ServerDataStore } from '@/lib/server-data-store'
 import { requireCurrentUser } from '@/lib/auth-server'
 import { canManageDevice, canViewDevice } from '@/lib/access-control'
 import { Device } from '@/lib/mock-data'
+import { createDeviceApiKey, hashSecret, toDeviceResponse } from '@/lib/secret-storage'
 
 function isMetricList(value: unknown): value is Device['metrics'] {
   if (!Array.isArray(value)) return false
@@ -39,7 +40,7 @@ export async function GET(
   if (!(await canViewDevice(currentUser, device))) {
     return NextResponse.json({ error: 'You do not have access to this device.' }, { status: 403 })
   }
-  return NextResponse.json(device)
+  return NextResponse.json(toDeviceResponse(device, null))
 }
 
 export async function PATCH(
@@ -66,7 +67,8 @@ export async function PATCH(
     return NextResponse.json({ error: 'You cannot manage this device.' }, { status: 403 })
   }
 
-  let updatedDevice = null
+  let updatedDevice: Device | null = null
+  let oneTimeApiKey: string | null = null
 
   switch (action) {
     case 'update': {
@@ -126,8 +128,9 @@ export async function PATCH(
       await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'device.deleted', 'device', deviceId)
       break
     case 'rotateKey': {
-      const apiKey = `iot_key_${Math.random().toString(36).substring(2, 22).toUpperCase()}`
-      updatedDevice = await ServerDataStore.updateDevice(deviceId, { apiKey })
+      oneTimeApiKey = createDeviceApiKey()
+      // Security-sensitive: rotate by replacing the stored hash; plaintext is returned once.
+      updatedDevice = await ServerDataStore.updateDevice(deviceId, { apiKeyHash: hashSecret(oneTimeApiKey) })
       await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'device.api_key_rotated', 'device', deviceId)
       break
     }
@@ -139,5 +142,5 @@ export async function PATCH(
     return NextResponse.json({ error: 'Failed to update device' }, { status: 500 })
   }
 
-  return NextResponse.json(updatedDevice)
+  return NextResponse.json(toDeviceResponse(updatedDevice, oneTimeApiKey))
 }

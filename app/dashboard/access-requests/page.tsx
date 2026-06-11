@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
@@ -20,7 +21,7 @@ import { PublicUser } from '@/lib/auth-types'
 import { StatusBadge, KPICard } from '@/components/layout/dashboard-layout'
 import { DashboardLayout } from '@/components/layout/dashboard-layout'
 import { format } from 'date-fns'
-import { CheckCircle2, XCircle, Clock, Eye, ShieldCheck, Users, Wallet } from 'lucide-react'
+import { CheckCircle2, XCircle, Clock, Eye, ShieldCheck, Users, Wallet, Copy } from 'lucide-react'
 
 export default function AccessRequestsPage() {
   const { userId, userName, userRole } = useAuth()
@@ -32,6 +33,7 @@ export default function AccessRequestsPage() {
   const [orders, setOrders] = useState<Order[]>([])
   const [users, setUsers] = useState<PublicUser[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
+  const [oneTimeGrant, setOneTimeGrant] = useState<{ developerName: string; token: string } | null>(null)
 
   // Load data from API
   useEffect(() => {
@@ -90,7 +92,13 @@ export default function AccessRequestsPage() {
   const handleApprove = async (id: string) => {
     if (!userId || !userName || !userRole) return
     try {
-      await actionAccessRequest(id, 'approve', userId, userName, userRole)
+      const result = await actionAccessRequest(id, 'approve', userId, userName, userRole)
+      if (result.grant?.token) {
+        setOneTimeGrant({
+          developerName: result.grant.developerName,
+          token: result.grant.token,
+        })
+      }
       setRefreshKey(prev => prev + 1)
       setSelectedRequest(null)
     } catch (error) {
@@ -135,6 +143,10 @@ export default function AccessRequestsPage() {
     } catch (error) {
       console.error('Failed to mark payout as refunded', error)
     }
+  }
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text)
   }
 
   const getDevice = (deviceId: string): Device | undefined => {
@@ -541,6 +553,25 @@ export default function AccessRequestsPage() {
                   Waiting for Midtrans confirmation. After payment succeeds, this request moves to Pending for owner approval.
                 </div>
               )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!oneTimeGrant} onOpenChange={(open) => !open && setOneTimeGrant(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Access Token Created</DialogTitle>
+            <DialogDescription>
+              Share this token with {oneTimeGrant?.developerName}. It will not be shown again.
+            </DialogDescription>
+          </DialogHeader>
+          {oneTimeGrant && (
+            <div className="flex items-center gap-2">
+              <Input value={oneTimeGrant.token} readOnly className="font-mono" />
+              <Button variant="outline" size="icon" onClick={() => copyToClipboard(oneTimeGrant.token)}>
+                <Copy className="h-4 w-4" />
+              </Button>
             </div>
           )}
         </DialogContent>

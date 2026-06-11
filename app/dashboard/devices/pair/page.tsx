@@ -119,7 +119,7 @@ export default function PairDevicePage() {
       })
 
       setNewDeviceId(newDevice.id)
-      setNewDeviceKey(newDevice.apiKey)
+      setNewDeviceKey(newDevice.apiKey || null)
       setIsSubmitted(true)
     } catch (error) {
       console.error('Failed to register device', error)

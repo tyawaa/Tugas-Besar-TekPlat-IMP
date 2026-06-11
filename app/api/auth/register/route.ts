@@ -9,6 +9,7 @@ import {
 } from '@/lib/auth-server'
 import { ServerDataStore } from '@/lib/server-data-store'
 import { toPublicUser } from '@/lib/auth-types'
+import { AUTH_REGISTER_RATE_LIMIT, consumeRateLimit } from '@/lib/rate-limit'
 
 export async function POST(request: Request) {
   await ensureBootstrapAdmin()
@@ -28,6 +29,9 @@ export async function POST(request: Request) {
   if (!name || !email || !password || !isValidRole(role)) {
     return NextResponse.json({ error: 'Name, email, password, and role are required.' }, { status: 400 })
   }
+
+  const rateLimitResponse = consumeRateLimit(request, AUTH_REGISTER_RATE_LIMIT, [{ name: 'email', value: email }])
+  if (rateLimitResponse) return rateLimitResponse
 
   if (role === 'admin') {
     return NextResponse.json({ error: 'Admin accounts are managed by the system.' }, { status: 403 })

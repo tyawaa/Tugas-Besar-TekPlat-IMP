@@ -93,6 +93,7 @@ export default function DataExplorerPage() {
 
   const selectedGrant = grants.find((g) => g.deviceId === selectedDeviceId)
   const selectedDevice = devices.find((d) => d.id === selectedDeviceId)
+  const selectedGrantToken = selectedGrant?.token || ''
   const latestTelemetry = telemetryData.length > 0 
     ? telemetryData[telemetryData.length - 1] 
     : null
@@ -186,14 +187,15 @@ export default function DataExplorerPage() {
               <CardContent className="space-y-4">
                 <div className="flex items-center gap-2">
                   <Input
-                    type={showToken ? 'text' : 'password'}
-                    value={selectedGrant.token}
+                    type={selectedGrantToken ? (showToken ? 'text' : 'password') : 'text'}
+                    value={selectedGrantToken || 'Token is hidden after one-time display.'}
                     readOnly
                     className="font-mono"
                   />
                   <Button
                     variant="outline"
                     size="icon"
+                    disabled={!selectedGrantToken}
                     onClick={() => setShowToken(!showToken)}
                   >
                     {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -201,7 +203,8 @@ export default function DataExplorerPage() {
                   <Button
                     variant="outline"
                     size="icon"
-                    onClick={() => copyToClipboard(selectedGrant.token)}
+                    disabled={!selectedGrantToken}
+                    onClick={() => copyToClipboard(selectedGrantToken)}
                   >
                     <Copy className="h-4 w-4" />
                   </Button>

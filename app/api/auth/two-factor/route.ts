@@ -4,23 +4,38 @@ import {
   getSecurityCodeExpiresAt,
   hashSecurityCode,
   requireCurrentUser,
+  SecurityEmailConfigurationError,
   sendSecurityEmail,
   verifySecurityCode,
 } from '@/lib/auth-server'
 import { ServerDataStore } from '@/lib/server-data-store'
 import { toPublicUser } from '@/lib/auth-types'
+import { consumeRateLimit, TWO_FACTOR_CONFIRM_RATE_LIMIT, TWO_FACTOR_REQUEST_RATE_LIMIT } from '@/lib/rate-limit'
 
 export async function POST(request: Request) {
   const currentUser = await requireCurrentUser(request)
   if (currentUser instanceof NextResponse) return currentUser
 
+  const rateLimitResponse = consumeRateLimit(request, TWO_FACTOR_REQUEST_RATE_LIMIT, [
+    { name: 'user', value: currentUser.id },
+  ])
+  if (rateLimitResponse) return rateLimitResponse
+
   const code = createSecurityCode()
-  const delivery = await sendSecurityEmail({
-    to: currentUser.email,
-    subject: 'Your IoTBridge two-factor code',
-    message: 'Use this code to confirm two-factor authentication changes.',
-    code,
-  })
+  let delivery: 'sent' | 'dev'
+  try {
+    delivery = await sendSecurityEmail({
+      to: currentUser.email,
+      subject: 'Your IoTBridge two-factor code',
+      message: 'Use this code to confirm two-factor authentication changes.',
+      code,
+    })
+  } catch (error) {
+    if (error instanceof SecurityEmailConfigurationError) {
+      return NextResponse.json({ error: error.message }, { status: 503 })
+    }
+    throw error
+  }
 
   await ServerDataStore.updateUser(currentUser.id, {
     twoFactorCodeHash: hashSecurityCode(code),
@@ -29,7 +44,7 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     message: delivery === 'sent' ? 'Verification code sent to your email.' : 'Development verification code generated.',
-    devCode: delivery === 'dev' ? code : undefined,
+    devCode: delivery === 'dev' && process.env.NODE_ENV === 'development' ? code : undefined,
   })
 }
 
@@ -47,6 +62,11 @@ export async function PATCH(request: Request) {
   const enabled = Boolean(body.enabled)
   const code = typeof body.code === 'string' ? body.code.trim() : ''
   const user = await ServerDataStore.getUserById(currentUser.id)
+
+  const rateLimitResponse = consumeRateLimit(request, TWO_FACTOR_CONFIRM_RATE_LIMIT, [
+    { name: 'user', value: currentUser.id },
+  ])
+  if (rateLimitResponse) return rateLimitResponse
 
   if (!user || !verifySecurityCode(code, user.twoFactorCodeHash, user.twoFactorCodeExpiresAt)) {
     return NextResponse.json({ error: 'Invalid or expired verification code.' }, { status: 401 })

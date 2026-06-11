@@ -4,6 +4,7 @@ import { requireCurrentUser } from '@/lib/auth-server'
 import { filterDevicesForUser, isGrantActive } from '@/lib/access-control'
 import { hasUserRole } from '@/lib/auth-types'
 import { BillingType, Device } from '@/lib/mock-data'
+import { createDeviceApiKey, createSecureId, hashSecret, toDeviceResponse } from '@/lib/secret-storage'
 
 export async function GET(request: Request) {
   const currentUser = await requireCurrentUser(request)
@@ -11,7 +12,7 @@ export async function GET(request: Request) {
 
   const devices = await ServerDataStore.getAllDevices()
   if (hasUserRole(currentUser, 'admin')) {
-    return NextResponse.json(devices)
+    return NextResponse.json(devices.map((device) => toDeviceResponse(device, null)))
   }
 
   if (hasUserRole(currentUser, 'developer')) {
@@ -29,10 +30,10 @@ export async function GET(request: Request) {
         (device.visibility === 'catalog' && device.status !== 'archived') || grantedDeviceIds.has(device.id)
       )
       .forEach(device => visibleDevices.set(device.id, device))
-    return NextResponse.json(Array.from(visibleDevices.values()))
+    return NextResponse.json(Array.from(visibleDevices.values()).map((device) => toDeviceResponse(device, null)))
   }
 
-  return NextResponse.json(filterDevicesForUser(currentUser, devices))
+  return NextResponse.json(filterDevicesForUser(currentUser, devices).map((device) => toDeviceResponse(device, null)))
 }
 
 export async function POST(request: Request) {
@@ -73,8 +74,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Missing required fields to register a device.' }, { status: 400 })
   }
 
+  const apiKey = createDeviceApiKey()
   const device: Device = {
-    id: `dev_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
+    id: createSecureId('dev'),
     name,
     type,
     location,
@@ -85,7 +87,8 @@ export async function POST(request: Request) {
     lastSeen: new Date().toISOString(),
     heartbeatInterval: Number(heartbeatInterval),
     metrics,
-    apiKey: `iot_key_${Math.random().toString(36).substring(2, 22).toUpperCase()}`,
+    // Security-sensitive: persist only the hash and return the plaintext key once.
+    apiKeyHash: hashSecret(apiKey),
     createdAt: new Date().toISOString(),
     billingType: normalizedBillingType,
     accessPrice: normalizedAccessPrice,
@@ -94,5 +97,5 @@ export async function POST(request: Request) {
 
   await ServerDataStore.addDevice(device)
   await ServerDataStore.logAction(currentUser.id, currentUser.name, currentUser.role, 'device.registered', 'device', device.id)
-  return NextResponse.json(device, { status: 201 })
+  return NextResponse.json(toDeviceResponse(device, apiKey), { status: 201 })
 }

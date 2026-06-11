@@ -5,6 +5,8 @@ import { requireCurrentUser } from '@/lib/auth-server'
 import { canManageDevice } from '@/lib/access-control'
 import { hasUserRole } from '@/lib/auth-types'
 import { AccessGrant, AccessRequest, Order } from '@/lib/mock-data'
+import { ACCESS_REQUEST_ACTION_RATE_LIMIT, consumeRateLimit } from '@/lib/rate-limit'
+import { createAccessGrantToken, createSecureId, hashSecret, toAccessGrantResponse } from '@/lib/secret-storage'
 import {
   applyMidtransStatusToOrder,
   assertProductionPaymentStorage,
@@ -145,6 +147,13 @@ export async function POST(
   if (!action) {
     return NextResponse.json({ error: 'Missing action' }, { status: 400 })
   }
+
+  const rateLimitResponse = consumeRateLimit(request, ACCESS_REQUEST_ACTION_RATE_LIMIT, [
+    { name: 'user', value: currentUser.id },
+    { name: 'request', value: requestId },
+    { name: 'action', value: String(action) },
+  ])
+  if (rateLimitResponse) return rateLimitResponse
 
   const requestItem = await ServerDataStore.getAccessRequestById(requestId)
   if (!requestItem) {
@@ -333,6 +342,7 @@ export async function POST(
   }
 
   let result: { request: typeof requestItem; grant?: AccessGrant; order?: Order } = { request: requestItem }
+  let oneTimeGrantToken: string | null = null
 
   if (action === 'approve') {
     const payoutOrder = paidOrders.find(order => canMarkPayoutEligible(order)) || null
@@ -343,13 +353,15 @@ export async function POST(
       )
     }
 
+    oneTimeGrantToken = createAccessGrantToken()
     const grant: AccessGrant = {
-      id: `ag_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
+      id: createSecureId('ag'),
       deviceId: requestItem.deviceId,
       developerId: requestItem.developerId,
       developerName: requestItem.developerName,
       scopes: requestItem.scopes,
-      token: `token_${Math.random().toString(36).substring(2, 32).toUpperCase()}`,
+      // Security-sensitive: store only the bearer token hash.
+      tokenHash: hashSecret(oneTimeGrantToken),
       expiresAt: requestItem.requestedUntil,
       createdAt: new Date().toISOString(),
     }
@@ -424,5 +436,8 @@ export async function POST(
     }
   }
 
-  return NextResponse.json(result)
+  return NextResponse.json({
+    ...result,
+    grant: result.grant ? toAccessGrantResponse(result.grant, oneTimeGrantToken) : undefined,
+  })
 }

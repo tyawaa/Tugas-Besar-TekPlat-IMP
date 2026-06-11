@@ -15,6 +15,13 @@ const DEFAULT_ADMIN_NAME = 'IoTBridge Admin'
 
 export interface AuthenticatedUser extends PublicUser {}
 
+export class SecurityEmailConfigurationError extends Error {
+  constructor() {
+    super('Security email delivery is not configured.')
+    this.name = 'SecurityEmailConfigurationError'
+  }
+}
+
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase()
 }
@@ -65,7 +72,11 @@ export async function sendSecurityEmail(input: {
   const from = process.env.IOTBRIDGE_EMAIL_FROM || 'IoTBridge <onboarding@resend.dev>'
 
   if (!resendApiKey) {
-    console.info(`[IoTBridge security code] ${input.to}: ${input.code}`)
+    if (process.env.NODE_ENV !== 'development') {
+      throw new SecurityEmailConfigurationError()
+    }
+
+    console.info('iotbridge.security_code.generated', { to: input.to, code: input.code })
     return 'dev'
   }
 
@@ -84,7 +95,8 @@ export async function sendSecurityEmail(input: {
   })
 
   if (!response.ok) {
-    throw new Error(`Email delivery failed: ${response.status} ${response.statusText}`)
+    const responseBody = await response.text()
+    throw new Error(`Email delivery failed: ${response.status} ${response.statusText} ${responseBody}`)
   }
 
   return 'sent'

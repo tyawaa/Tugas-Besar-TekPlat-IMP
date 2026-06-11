@@ -20,6 +20,7 @@ import { createInitialDemoUsers, shouldSeedDemoUsers } from './demo-users'
 import { isPostgresConfigured, PostgresDataStore } from './postgres-data-store'
 import { normalizeOrderPayout } from './order-payouts'
 import { getLatestOrder } from './payment-state'
+import { createSecureId, normalizeStoredAccessGrantSecret, normalizeStoredDeviceSecret } from './secret-storage'
 
 const DATA_DIR =
   process.env.IOTBRIDGE_DATA_DIR ||
@@ -201,7 +202,7 @@ async function writeCollection(collection: CollectionName, data: unknown): Promi
 }
 
 function generateId(prefix: string): string {
-  return `${prefix}_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`
+  return createSecureId(prefix)
 }
 
 function createAuditLog(input: AuditLogInput): AuditLog {
@@ -374,7 +375,13 @@ export class ServerDataStore {
 
   static async getAllDevices(): Promise<Device[]> {
     if (isPostgresConfigured()) return PostgresDataStore.getAllDevices()
-    return this.getDevicesFile()
+    const devices = await this.getDevicesFile()
+    const normalizedResults = devices.map(normalizeStoredDeviceSecret)
+    const normalizedDevices = normalizedResults.map((result) => result.device)
+    if (normalizedResults.some((result) => result.migrated)) {
+      await this.writeDevices(normalizedDevices)
+    }
+    return normalizedDevices
   }
 
   static async getDeviceById(id: string): Promise<Device | null> {
@@ -385,10 +392,11 @@ export class ServerDataStore {
 
   static async addDevice(device: Device): Promise<Device> {
     if (isPostgresConfigured()) return PostgresDataStore.addDevice(device)
+    const normalizedDevice = normalizeStoredDeviceSecret(device).device
     const devices = await this.getAllDevices()
-    devices.push(device)
+    devices.push(normalizedDevice)
     await this.writeDevices(devices)
-    return device
+    return normalizedDevice
   }
 
   static async updateDevice(id: string, updates: Partial<Device>): Promise<Device | null> {
@@ -396,7 +404,7 @@ export class ServerDataStore {
     const devices = await this.getAllDevices()
     const index = devices.findIndex(device => device.id === id)
     if (index < 0) return null
-    devices[index] = { ...devices[index], ...updates }
+    devices[index] = normalizeStoredDeviceSecret({ ...devices[index], ...updates }).device
     await this.writeDevices(devices)
     return devices[index]
   }
@@ -432,15 +440,22 @@ export class ServerDataStore {
 
   static async getAllAccessGrants(): Promise<AccessGrant[]> {
     if (isPostgresConfigured()) return PostgresDataStore.getAllAccessGrants()
-    return this.getAccessGrantsFile()
+    const grants = await this.getAccessGrantsFile()
+    const normalizedResults = grants.map(normalizeStoredAccessGrantSecret)
+    const normalizedGrants = normalizedResults.map((result) => result.grant)
+    if (normalizedResults.some((result) => result.migrated)) {
+      await this.writeAccessGrants(normalizedGrants)
+    }
+    return normalizedGrants
   }
 
   static async addAccessGrant(grant: AccessGrant): Promise<AccessGrant> {
     if (isPostgresConfigured()) return PostgresDataStore.addAccessGrant(grant)
+    const normalizedGrant = normalizeStoredAccessGrantSecret(grant).grant
     const grants = await this.getAllAccessGrants()
-    grants.push(grant)
+    grants.push(normalizedGrant)
     await this.writeAccessGrants(grants)
-    return grant
+    return normalizedGrant
   }
 
   static async revokeAccessGrant(id: string): Promise<boolean> {

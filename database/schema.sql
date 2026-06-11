@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS devices (
   last_seen TEXT NOT NULL,
   heartbeat_interval INTEGER NOT NULL,
   metrics JSONB NOT NULL DEFAULT '[]'::jsonb,
-  api_key TEXT NOT NULL,
+  api_key TEXT NOT NULL, -- SHA-256 hash of the device API key.
   created_at TEXT NOT NULL,
   billing_type TEXT NOT NULL DEFAULT 'free' CHECK (billing_type IN ('free', 'one_time')),
   access_price INTEGER NOT NULL DEFAULT 0,
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS access_grants (
   developer_name TEXT NOT NULL,
   scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
   expires_at TEXT NOT NULL,
-  token TEXT NOT NULL UNIQUE,
+  token TEXT NOT NULL UNIQUE, -- SHA-256 hash of the access grant bearer token.
   created_at TEXT NOT NULL
 );
 

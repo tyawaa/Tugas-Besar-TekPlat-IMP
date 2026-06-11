@@ -8,7 +8,7 @@
       "telemetry:read"
     ],
     "expiresAt": "2024-04-30",
-    "token": "grant_tok_jkl012mno345pqr678",
+    "tokenHash": "5467fe28e3c7dd8037a4cf59c72b73df23bf5354594ef27e6fb1e1880f5f8a40",
     "createdAt": "2024-02-15"
   }
 ]

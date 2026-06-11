@@ -2,13 +2,16 @@ import { NextResponse } from 'next/server'
 import { ServerDataStore } from '@/lib/server-data-store'
 import { requireCurrentUser } from '@/lib/auth-server'
 import { hasUserRole } from '@/lib/auth-types'
+import { toAccessGrantResponse } from '@/lib/secret-storage'
 
 export async function GET(request: Request) {
   const currentUser = await requireCurrentUser(request)
   if (currentUser instanceof NextResponse) return currentUser
 
   const grants = await ServerDataStore.getAllAccessGrants()
-  if (hasUserRole(currentUser, 'admin')) return NextResponse.json(grants)
+  if (hasUserRole(currentUser, 'admin')) {
+    return NextResponse.json(grants.map((grant) => toAccessGrantResponse(grant, null)))
+  }
 
   const visibleGrantIds = new Set<string>()
   if (hasUserRole(currentUser, 'developer')) {
@@ -25,5 +28,9 @@ export async function GET(request: Request) {
       .forEach(grant => visibleGrantIds.add(grant.id))
   }
 
-  return NextResponse.json(grants.filter(grant => visibleGrantIds.has(grant.id)))
+  return NextResponse.json(
+    grants
+      .filter(grant => visibleGrantIds.has(grant.id))
+      .map((grant) => toAccessGrantResponse(grant, null))
+  )
 }

@@ -58,6 +58,8 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
   const [accessGrants, setAccessGrants] = useState<AccessGrant[]>([])
   const [telemetryData, setTelemetryData] = useState<TelemetryRecord[]>([])
   const [showApiKey, setShowApiKey] = useState(false)
+  const [simulatorApiKey, setSimulatorApiKey] = useState('')
+  const [oneTimeGrant, setOneTimeGrant] = useState<{ developerName: string; token: string } | null>(null)
   const [simulatorRunning, setSimulatorRunning] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const simulatorRef = useRef<NodeJS.Timeout | null>(null)
@@ -74,6 +76,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
         ])
 
         setDevice(deviceData)
+        setSimulatorApiKey((currentKey) => currentKey || deviceData?.apiKey || '')
         setAccessRequests(allRequests.filter((request) => request.deviceId === deviceId))
         setAccessGrants(allGrants.filter((grant) => grant.deviceId === deviceId))
         setTelemetryData(telemetryHistory)
@@ -155,13 +158,20 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
 
   const handleStartSimulator = () => {
     if (!device || !userId || !userName || !userRole) return
+    if (!simulatorApiKey.trim()) {
+      toast({
+        title: 'Device key required',
+        description: 'Rotate the API key or paste the saved one-time key before starting the simulator.',
+      })
+      return
+    }
 
     setSimulatorRunning(true)
 
     simulatorRef.current = setInterval(async () => {
       const telemetryPayload = generateRandomTelemetry(device.metrics)
       try {
-        await ingestTelemetry(deviceId, telemetryPayload, device.apiKey)
+        await ingestTelemetry(deviceId, telemetryPayload, simulatorApiKey)
         setRefreshKey((prev) => prev + 1)
       } catch (error) {
         console.error('Failed to ingest telemetry', error)
@@ -181,10 +191,17 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
 
   const handleInjectAnomaly = async () => {
     if (!device || !userId || !userName || !userRole) return
+    if (!simulatorApiKey.trim()) {
+      toast({
+        title: 'Device key required',
+        description: 'Rotate the API key or paste the saved one-time key before injecting telemetry.',
+      })
+      return
+    }
 
     const anomalyData = generateRandomTelemetry(device.metrics, true)
     try {
-      await ingestTelemetry(deviceId, anomalyData, device.apiKey)
+      await ingestTelemetry(deviceId, anomalyData, simulatorApiKey)
       setRefreshKey((prev) => prev + 1)
     } catch (error) {
       console.error('Failed to ingest anomaly telemetry', error)
@@ -194,7 +211,13 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
   const handleApproveRequest = async (requestId: string) => {
     if (!userId || !userName || !userRole) return
     try {
-      await actionAccessRequest(requestId, 'approve', userId, userName, userRole)
+      const result = await actionAccessRequest(requestId, 'approve', userId, userName, userRole)
+      if (result.grant?.token) {
+        setOneTimeGrant({
+          developerName: result.grant.developerName,
+          token: result.grant.token,
+        })
+      }
       setRefreshKey((prev) => prev + 1)
     } catch (error) {
       console.error('Failed to approve request', error)
@@ -224,9 +247,10 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
   const handleRotateApiKey = async () => {
     if (!userId || !userName || !userRole) return
     try {
-      await updateDeviceAction(deviceId, 'rotateKey', userId, userName, userRole)
+      const rotatedDevice = await updateDeviceAction(deviceId, 'rotateKey', userId, userName, userRole)
+      setDevice(rotatedDevice)
+      setSimulatorApiKey(rotatedDevice.apiKey || '')
       setShowApiKey(true)
-      setRefreshKey((prev) => prev + 1)
       toast({
         title: 'API key rotated',
         description: 'The new device key is now shown in the credentials panel.',
@@ -273,6 +297,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
 
   const pendingRequests = accessRequests.filter(ar => ar.status === 'pending')
   const latestTelemetry = telemetryData.length > 0 ? telemetryData[telemetryData.length - 1] : null
+  const hasVisibleApiKey = Boolean(device.apiKey)
 
   // Generate chart data from telemetry or use mock
   const telemetryHistory = telemetryData.length > 0
@@ -382,6 +407,13 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
               <p className="text-sm text-muted-foreground">
                 Use the simulator to test your device integration by generating mock telemetry data.
               </p>
+              <Input
+                type="password"
+                value={simulatorApiKey}
+                onChange={(event) => setSimulatorApiKey(event.target.value)}
+                placeholder="Paste saved one-time device key"
+                className="font-mono"
+              />
               <div className="flex flex-col gap-2">
                 <Button
                   onClick={simulatorRunning ? handleStopSimulator : handleStartSimulator}
@@ -450,14 +482,15 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
                 <label className="text-sm font-medium text-muted-foreground">API Key</label>
                 <div className="flex items-center gap-2">
                   <Input
-                    type={showApiKey ? 'text' : 'password'}
-                    value={device.apiKey}
+                    type={hasVisibleApiKey ? (showApiKey ? 'text' : 'password') : 'text'}
+                    value={device.apiKey || 'API key is hidden. Rotate to generate a new one.'}
                     readOnly
                     className="font-mono"
                   />
                   <Button
                     variant="outline"
                     size="icon"
+                    disabled={!hasVisibleApiKey}
                     onClick={() => setShowApiKey(!showApiKey)}
                   >
                     <Eye className="h-4 w-4" />
@@ -465,7 +498,8 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
                   <Button
                     variant="outline"
                     size="icon"
-                    onClick={() => copyToClipboard(device.apiKey)}
+                    disabled={!hasVisibleApiKey}
+                    onClick={() => copyToClipboard(device.apiKey || '')}
                   >
                     <Copy className="h-4 w-4" />
                   </Button>
@@ -610,6 +644,25 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ deviceI
             )}
           </CardContent>
         </Card>
+
+        <Dialog open={!!oneTimeGrant} onOpenChange={(open) => !open && setOneTimeGrant(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Access Token Created</DialogTitle>
+              <DialogDescription>
+                Share this token with {oneTimeGrant?.developerName}. It will not be shown again.
+              </DialogDescription>
+            </DialogHeader>
+            {oneTimeGrant && (
+              <div className="flex items-center gap-2">
+                <Input value={oneTimeGrant.token} readOnly className="font-mono" />
+                <Button variant="outline" size="icon" onClick={() => copyToClipboard(oneTimeGrant.token)}>
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   )

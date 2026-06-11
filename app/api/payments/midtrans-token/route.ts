@@ -20,6 +20,8 @@ import {
   markPaymentCancelled,
   markPaymentFailed,
 } from '@/lib/payment-state'
+import { consumeRateLimit, PAYMENT_TOKEN_RATE_LIMIT } from '@/lib/rate-limit'
+import { createSecureId } from '@/lib/secret-storage'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,13 +34,11 @@ function getClientSubmittedAmount(value: unknown): number | null {
 }
 
 function createMidtransOrderId(): string {
-  const randomSuffix = Math.random().toString(36).substring(2, 10)
-  return `iot-${Date.now()}-${randomSuffix}`
+  return createSecureId('iot').replaceAll('_', '-')
 }
 
 function createOrderId(): string {
-  const randomSuffix = Math.random().toString(36).substring(2, 10)
-  return `ord_${Date.now()}_${randomSuffix}`
+  return createSecureId('ord')
 }
 
 function getSnapRedirectUrl(isProduction: boolean, snapToken: string): string {
@@ -225,6 +225,12 @@ export async function POST(request: Request) {
   if (!orderId || !customerName || !customerEmail) {
     return NextResponse.json({ error: 'orderId, customerName, and customerEmail are required.' }, { status: 400 })
   }
+
+  const rateLimitResponse = consumeRateLimit(request, PAYMENT_TOKEN_RATE_LIMIT, [
+    { name: 'user', value: currentUser.id },
+    { name: 'order', value: orderId },
+  ])
+  if (rateLimitResponse) return rateLimitResponse
 
   const accessRequest = await ServerDataStore.getAccessRequestById(orderId)
   if (!accessRequest) {

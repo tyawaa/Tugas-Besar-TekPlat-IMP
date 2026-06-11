@@ -2,6 +2,7 @@ import { AccessGrant, Device } from './mock-data'
 import { ServerDataStore } from './server-data-store'
 import { AuthenticatedUser } from './auth-server'
 import { hasUserRole } from './auth-types'
+import { verifySecret } from './secret-storage'
 
 export function isGrantActive(grant: AccessGrant): boolean {
   return new Date(grant.expiresAt) >= new Date()
@@ -21,7 +22,7 @@ export async function getGrantFromBearerToken(request: Request, deviceId: string
 
   const grants = await ServerDataStore.getAllAccessGrants()
   return grants.find(
-    grant => grant.deviceId === deviceId && grant.token === token && isGrantActive(grant)
+    grant => grant.deviceId === deviceId && verifySecret(token, grant.tokenHash || '') && isGrantActive(grant)
   ) || null
 }
 

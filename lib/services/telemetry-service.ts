@@ -1,5 +1,6 @@
 import { TelemetryRecord } from '@/lib/mock-data'
 import { ServerDataStore } from '@/lib/server-data-store'
+import { createSecureId, verifySecret } from '@/lib/secret-storage'
 
 export type TelemetryData = Record<string, number | boolean | string>
 
@@ -55,7 +56,8 @@ export class TelemetryService {
       throw new TelemetryServiceError(404, { error: 'Device not found.' })
     }
 
-    if (device.apiKey !== deviceKey) {
+    // Security-sensitive: compare the presented device key with the stored hash only.
+    if (!verifySecret(deviceKey, device.apiKeyHash || '')) {
       throw new TelemetryServiceError(401, { error: 'Invalid device key.' })
     }
 
@@ -79,7 +81,7 @@ export class TelemetryService {
     }
 
     const record: TelemetryRecord = {
-      id: `tel_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
+      id: createSecureId('tel'),
       deviceId,
       timestamp: new Date().toISOString(),
       data: input.metrics,

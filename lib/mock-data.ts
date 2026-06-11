@@ -46,7 +46,8 @@ export interface Device {
   lastSeen: string
   heartbeatInterval: number
   metrics: Metric[]
-  apiKey: string
+  apiKey?: string
+  apiKeyHash?: string
   createdAt: string
   billingType?: BillingType
   accessPrice?: number
@@ -88,7 +89,8 @@ export interface AccessGrant {
   developerName: string
   scopes: string[]
   expiresAt: string
-  token: string
+  token?: string
+  tokenHash?: string
   createdAt: string
 }
 
@@ -176,7 +178,7 @@ export const devices: Device[] = [
       { key: 'humidity', label: 'Humidity', valueType: 'number', unit: '%' },
       { key: 'pressure', label: 'Pressure', valueType: 'number', unit: 'hPa' },
     ],
-    apiKey: 'iot_key_abc123xyz789',
+    apiKeyHash: '8dd4d974ddbe55385fda432e2350e146ef25bcea19f51048e499a9b5ecef9b53',
     createdAt: '2024-01-20',
   },
   {
@@ -194,7 +196,7 @@ export const devices: Device[] = [
       { key: 'noise_level', label: 'Noise Level', valueType: 'number', unit: 'dB' },
       { key: 'peak_noise', label: 'Peak Noise', valueType: 'number', unit: 'dB' },
     ],
-    apiKey: 'iot_key_def456uvw012',
+    apiKeyHash: 'f6127b4280971cc6fe5862863ff90743c34cd7e4dc57540b790e3929eb789879',
     createdAt: '2024-02-05',
   },
   {
@@ -212,7 +214,7 @@ export const devices: Device[] = [
       { key: 'occupancy', label: 'Current Occupancy', valueType: 'number', unit: 'people' },
       { key: 'capacity', label: 'Room Capacity', valueType: 'number', unit: 'people' },
     ],
-    apiKey: 'iot_key_ghi789rst345',
+    apiKeyHash: 'e2afba77a41e12e8b21780011df0e26797c648fe9098b4351c7f29dbc8081a66',
     createdAt: '2024-02-10',
   },
   {
@@ -231,7 +233,7 @@ export const devices: Device[] = [
       { key: 'voc', label: 'VOC Index', valueType: 'number', unit: 'index' },
       { key: 'pm25', label: 'PM2.5', valueType: 'number', unit: 'µg/m³' },
     ],
-    apiKey: 'iot_key_jkl012mno678',
+    apiKeyHash: '03eb0fe6237347837f37e127b62668ceaddc937c610db9579281ca59f0923f50',
     createdAt: '2024-02-15',
   },
   {
@@ -249,7 +251,7 @@ export const devices: Device[] = [
       { key: 'available_spots', label: 'Available Spots', valueType: 'number', unit: 'spots' },
       { key: 'total_spots', label: 'Total Spots', valueType: 'number', unit: 'spots' },
     ],
-    apiKey: 'iot_key_pqr345stu901',
+    apiKeyHash: 'ed3b30a6cc73c27ef56a6cc8ae279314a186e8aebb7bf21574a6b0c2decd2804',
     createdAt: '2024-01-25',
   },
   {
@@ -267,7 +269,7 @@ export const devices: Device[] = [
       { key: 'power', label: 'Current Power', valueType: 'number', unit: 'kW' },
       { key: 'energy_today', label: 'Energy Today', valueType: 'number', unit: 'kWh' },
     ],
-    apiKey: 'iot_key_vwx678yza234',
+    apiKeyHash: '0d96b353709a1e47ddb0355a30c9fb36cf9bba2dac48838cc6351787b37e95b3',
     createdAt: '2024-03-01',
   },
 ]
@@ -378,7 +380,7 @@ export const accessGrants: AccessGrant[] = [
     developerName: 'Budi Santoso',
     scopes: ['telemetry:read', 'telemetry:history'],
     expiresAt: '2024-05-15',
-    token: 'grant_tok_abc123def456ghi789',
+    tokenHash: '17c8e297c0e6591906d2d23a38c90c6c100f39804dadd4a62b70a34f3bd3c444',
     createdAt: '2024-03-06',
   },
   {
@@ -388,7 +390,7 @@ export const accessGrants: AccessGrant[] = [
     developerName: 'Budi Santoso',
     scopes: ['telemetry:read'],
     expiresAt: '2024-04-30',
-    token: 'grant_tok_jkl012mno345pqr678',
+    tokenHash: '5467fe28e3c7dd8037a4cf59c72b73df23bf5354594ef27e6fb1e1880f5f8a40',
     createdAt: '2024-02-15',
   },
 ]

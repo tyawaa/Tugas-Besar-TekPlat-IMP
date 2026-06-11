@@ -131,7 +131,7 @@ Headers:
 ```http
 Content-Type: application/json
 X-Device-Id: dev-001
-X-Device-Key: iot_key_abc123xyz789
+X-Device-Key: <your_device_api_key>
 ```
 
 Body:
@@ -167,7 +167,7 @@ Response sukses:
 curl -X POST "https://nama-project.vercel.app/api/v1/ingestion/telemetry" \
   -H "Content-Type: application/json" \
   -H "X-Device-Id: dev-001" \
-  -H "X-Device-Key: iot_key_abc123xyz789" \
+  -H "X-Device-Key: <your_device_api_key>" \
   -d "{\"metrics\":{\"temperature\":26.4,\"humidity\":68,\"pressure\":1013.25}}"
 ```
 
@@ -191,7 +191,7 @@ const char* WIFI_PASSWORD = "YOUR_PASSWORD";
 
 const char* API_URL = "https://nama-project.vercel.app/api/v1/ingestion/telemetry";
 const char* DEVICE_ID = "dev-001";
-const char* DEVICE_KEY = "iot_key_abc123xyz789";
+const char* DEVICE_KEY = "<your_device_api_key>";
 
 void setup() {
   Serial.begin(115200);

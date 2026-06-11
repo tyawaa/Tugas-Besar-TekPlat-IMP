@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { ensureBootstrapAdmin, hashPassword, normalizeEmail, verifySecurityCode } from '@/lib/auth-server'
 import { ServerDataStore } from '@/lib/server-data-store'
+import { consumeRateLimit, PASSWORD_RESET_CONFIRM_RATE_LIMIT } from '@/lib/rate-limit'
 
 export async function POST(request: Request) {
   await ensureBootstrapAdmin()
@@ -19,6 +20,9 @@ export async function POST(request: Request) {
   if (!email || !code || !password) {
     return NextResponse.json({ error: 'Email, code, and new password are required.' }, { status: 400 })
   }
+
+  const rateLimitResponse = consumeRateLimit(request, PASSWORD_RESET_CONFIRM_RATE_LIMIT, [{ name: 'email', value: email }])
+  if (rateLimitResponse) return rateLimitResponse
 
   if (password.length < 8) {
     return NextResponse.json({ error: 'New password must be at least 8 characters.' }, { status: 400 })

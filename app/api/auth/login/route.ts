@@ -6,6 +6,7 @@ import {
   getSecurityCodeExpiresAt,
   hashSecurityCode,
   normalizeEmail,
+  SecurityEmailConfigurationError,
   sendSecurityEmail,
   setSessionCookie,
   verifyPassword,
@@ -13,6 +14,7 @@ import {
 } from '@/lib/auth-server'
 import { ServerDataStore } from '@/lib/server-data-store'
 import { toPublicUser } from '@/lib/auth-types'
+import { AUTH_LOGIN_RATE_LIMIT, consumeRateLimit } from '@/lib/rate-limit'
 
 export async function POST(request: Request) {
   await ensureBootstrapAdmin()
@@ -32,6 +34,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Email and password are required.' }, { status: 400 })
   }
 
+  const rateLimitResponse = consumeRateLimit(request, AUTH_LOGIN_RATE_LIMIT, [{ name: 'email', value: email }])
+  if (rateLimitResponse) return rateLimitResponse
+
   const user = await ServerDataStore.getUserByEmail(email)
   if (!user || !verifyPassword(password, user.passwordHash)) {
     return NextResponse.json({ error: 'Invalid email or password.' }, { status: 401 })
@@ -44,12 +49,20 @@ export async function POST(request: Request) {
   if (user.twoFactorEnabled) {
     if (!twoFactorCode) {
       const code = createSecurityCode()
-      const delivery = await sendSecurityEmail({
-        to: user.email,
-        subject: 'Your IoTBridge sign-in code',
-        message: 'Use this code to finish signing in to IoTBridge.',
-        code,
-      })
+      let delivery: 'sent' | 'dev'
+      try {
+        delivery = await sendSecurityEmail({
+          to: user.email,
+          subject: 'Your IoTBridge sign-in code',
+          message: 'Use this code to finish signing in to IoTBridge.',
+          code,
+        })
+      } catch (error) {
+        if (error instanceof SecurityEmailConfigurationError) {
+          return NextResponse.json({ error: error.message }, { status: 503 })
+        }
+        throw error
+      }
 
       await ServerDataStore.updateUser(user.id, {
         twoFactorCodeHash: hashSecurityCode(code),
@@ -59,7 +72,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         requiresTwoFactor: true,
         message: delivery === 'sent' ? 'Verification code sent to your email.' : 'Development verification code generated.',
-        devCode: delivery === 'dev' ? code : undefined,
+        devCode: delivery === 'dev' && process.env.NODE_ENV === 'development' ? code : undefined,
       })
     }
 

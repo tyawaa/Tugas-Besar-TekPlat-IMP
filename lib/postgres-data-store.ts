@@ -18,6 +18,12 @@ import { AuthSession, StoredUser, normalizeStoredUser, normalizeUserRoles } from
 import { createInitialDemoUsers } from './demo-users'
 import { normalizeOrderPayout } from './order-payouts'
 import { normalizeBillingSnapshot } from './billing-snapshot'
+import {
+  ensureSecretHash,
+  isSecretHash,
+  normalizeStoredAccessGrantSecret,
+  normalizeStoredDeviceSecret,
+} from './secret-storage'
 
 const POSTGRES_URL =
   process.env.DATABASE_URL ||
@@ -188,6 +194,7 @@ async function initializeDatabase(): Promise<void> {
     await client.query('BEGIN')
     await createTables(client)
     await seedInitialData(client)
+    await migratePlaintextSecretColumns(client)
     await client.query('COMMIT')
   } catch (error) {
     await client.query('ROLLBACK')
@@ -512,6 +519,22 @@ async function seedDemoUsers(client: PoolClient): Promise<void> {
   }
 }
 
+async function migratePlaintextSecretColumns(client: PoolClient): Promise<void> {
+  const deviceRows = await client.query<{ id: string; api_key: string }>('SELECT id, api_key FROM devices')
+  for (const row of deviceRows.rows) {
+    if (!isSecretHash(row.api_key)) {
+      await client.query('UPDATE devices SET api_key = $1 WHERE id = $2', [ensureSecretHash(row.api_key), row.id])
+    }
+  }
+
+  const grantRows = await client.query<{ id: string; token: string }>('SELECT id, token FROM access_grants')
+  for (const row of grantRows.rows) {
+    if (!isSecretHash(row.token)) {
+      await client.query('UPDATE access_grants SET token = $1 WHERE id = $2', [ensureSecretHash(row.token), row.id])
+    }
+  }
+}
+
 async function isTableEmpty(client: PoolClient, tableName: string): Promise<boolean> {
   const result = await client.query<{ count: string }>(`SELECT COUNT(*) AS count FROM ${tableName}`)
   return Number(result.rows[0]?.count || 0) === 0
@@ -576,7 +599,7 @@ function mapSession(row: SessionRow): AuthSession {
 }
 
 function mapDevice(row: DeviceRow): Device {
-  return {
+  return normalizeStoredDeviceSecret({
     id: row.id,
     name: row.name,
     type: row.type,
@@ -588,12 +611,12 @@ function mapDevice(row: DeviceRow): Device {
     lastSeen: row.last_seen,
     heartbeatInterval: row.heartbeat_interval,
     metrics: parseJsonArray<Device['metrics'][number]>(row.metrics),
-    apiKey: row.api_key,
+    apiKeyHash: row.api_key,
     createdAt: row.created_at,
     billingType: row.billing_type || 'free',
     accessPrice: Number(row.access_price || 0),
     currency: row.currency || 'IDR',
-  }
+  }).device
 }
 
 function mapTelemetry(row: TelemetryRow): TelemetryRecord {
@@ -622,16 +645,16 @@ function mapAccessRequest(row: AccessRequestRow): AccessRequest {
 }
 
 function mapAccessGrant(row: AccessGrantRow): AccessGrant {
-  return {
+  return normalizeStoredAccessGrantSecret({
     id: row.id,
     deviceId: row.device_id,
     developerId: row.developer_id,
     developerName: row.developer_name,
     scopes: parseJsonArray<string>(row.scopes),
     expiresAt: row.expires_at,
-    token: row.token,
+    tokenHash: row.token,
     createdAt: row.created_at,
-  }
+  }).grant
 }
 
 function mapAuditLog(row: AuditLogRow): AuditLog {
@@ -697,23 +720,24 @@ function sessionParams(session: AuthSession): unknown[] {
 }
 
 function deviceParams(device: Device): unknown[] {
+  const normalizedDevice = normalizeStoredDeviceSecret(device).device
   return [
-    device.id,
-    device.name,
-    device.type,
-    device.location,
-    device.description,
-    device.ownerId,
-    device.status,
-    device.visibility,
-    device.lastSeen,
-    device.heartbeatInterval,
-    JSON.stringify(device.metrics),
-    device.apiKey,
-    device.createdAt,
-    device.billingType || 'free',
-    Math.max(0, Math.round(Number(device.accessPrice || 0))),
-    device.currency || 'IDR',
+    normalizedDevice.id,
+    normalizedDevice.name,
+    normalizedDevice.type,
+    normalizedDevice.location,
+    normalizedDevice.description,
+    normalizedDevice.ownerId,
+    normalizedDevice.status,
+    normalizedDevice.visibility,
+    normalizedDevice.lastSeen,
+    normalizedDevice.heartbeatInterval,
+    JSON.stringify(normalizedDevice.metrics),
+    normalizedDevice.apiKeyHash,
+    normalizedDevice.createdAt,
+    normalizedDevice.billingType || 'free',
+    Math.max(0, Math.round(Number(normalizedDevice.accessPrice || 0))),
+    normalizedDevice.currency || 'IDR',
   ]
 }
 
@@ -738,15 +762,16 @@ function accessRequestParams(request: AccessRequest): unknown[] {
 }
 
 function accessGrantParams(grant: AccessGrant): unknown[] {
+  const normalizedGrant = normalizeStoredAccessGrantSecret(grant).grant
   return [
-    grant.id,
-    grant.deviceId,
-    grant.developerId,
-    grant.developerName,
-    JSON.stringify(grant.scopes),
-    grant.expiresAt,
-    grant.token,
-    grant.createdAt,
+    normalizedGrant.id,
+    normalizedGrant.deviceId,
+    normalizedGrant.developerId,
+    normalizedGrant.developerName,
+    JSON.stringify(normalizedGrant.scopes),
+    normalizedGrant.expiresAt,
+    normalizedGrant.tokenHash,
+    normalizedGrant.createdAt,
   ]
 }
 

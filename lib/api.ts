@@ -135,7 +135,7 @@ export async function getDevice(deviceId: string): Promise<Device | null> {
   return fetchJson<Device | null>(`${baseUrl}/devices/${deviceId}`)
 }
 
-export async function registerDevice(payload: Omit<Device, 'id' | 'apiKey' | 'createdAt' | 'status' | 'lastSeen'> & { status?: Device['status']; lastSeen?: string }): Promise<Device> {
+export async function registerDevice(payload: Omit<Device, 'id' | 'apiKey' | 'apiKeyHash' | 'createdAt' | 'status' | 'lastSeen'> & { status?: Device['status']; lastSeen?: string }): Promise<Device> {
   return fetchJson<Device>(`${baseUrl}/devices`, {
     method: 'POST',
     body: JSON.stringify(payload),
